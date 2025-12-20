@@ -1,0 +1,11 @@
+opentelemetry-api
+opentelemetry-sdk
+wrapt
+opentelemetry-exporter-otlp
+opentelemetry-instrumentation-logging
+
+wheel 
+setuptools
+--trusted-host pypi.org
+--trusted-host files.pythonhosted.org
+pip-system-certs
