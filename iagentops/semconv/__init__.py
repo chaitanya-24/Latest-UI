@@ -59,6 +59,7 @@ class SemanticConvention:
     GEN_AI_REQUEST_SEED = "gen_ai.request.seed"
     GEN_AI_REQUEST_STOP_SEQUENCES = "gen_ai.request.stop_sequences"
     GEN_AI_AGENT_NAME = "gen_ai.agent.name"
+    GEN_AI_TASK_ID = "gen_ai.task.id"
     GEN_AI_TOOL_CALL_ID = "gen_ai.tool.call.id"
     GEN_AI_TOOL_DESCRIPTION = "gen_ai.tool.description"
     GEN_AI_TOOL_NAME = "gen_ai.tool.name"

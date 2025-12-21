@@ -16,7 +16,7 @@ WRAPPED_METHODS = [
 
 class AsyncADKInstrumentor:
     def instrument(self, service_name="iagentops", environment="development", sdk_version="0.1.0", agent_id=None, server_address=None, server_port=None, collector_endpoint=None, use_console_exporter=True, exporter_protocol="http", **kwargs):
-        self.tracer = trac ing.setup_tracer(
+        self.tracer = tracing.setup_tracer(
             service_name=service_name, 
             environment=environment, 
             sdk_version=sdk_version,

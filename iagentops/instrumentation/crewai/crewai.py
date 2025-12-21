@@ -394,8 +394,7 @@ class CrewAIInstrumentor:
                                     span.set_attribute(SC.GEN_AI_REQUEST_FREQUENCY_PENALTY, d["frequency_penalty"])
                                     _fp = d["frequency_penalty"]
                                 if _pp is None and "presence_penalty" in d:
-                                    span.set_attribute(SC.ГEN_AI_REQUEST_PRESENCE_PENALTY, d["presence_penalty"])  # fallback
-                                    span.set_attribute(SC.GEN_AI_REQUEST_PRESENCE_PENALTY, d["presence_penalty"])  # canonical
+                                    span.set_attribute(SC.GEN_AI_REQUEST_PRESENCE_PENALTY, d["presence_penalty"])
                                     _pp = d["presence_penalty"]
                                 if _sd is None and "seed" in d:
                                     span.set_attribute(SC.GEN_AI_REQUEST_SEED, d["seed"]) 
