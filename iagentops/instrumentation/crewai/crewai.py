@@ -7,6 +7,7 @@ from iagentops.semconv import SemanticConvention as SC
 from iagentops import helpers
 import json
 import traceback
+import uuid
 
 WRAPPED_METHODS = [
     # Crew execution operations (workflow-level)
@@ -16,7 +17,7 @@ WRAPPED_METHODS = [
     {"package": "crewai.crew", "object": "Crew.kickoff_for_each_async", "provider_attr": None, "operation": "workflow"},
 
     # High-level Agent and Task operations
-    {"package": "crewai.agent", "object": "Agent.execute_task", "provider_attr": None, "operation": "workflow"},
+    {"package": "crewai.agent", "object": "Agent.execute_task", "provider_attr": None, "operation": "invoke_agent"},
     {"package": "crewai.task", "object": "Task.execute", "provider_attr": None, "operation": "workflow"},
     {"package": "crewai.task", "object": "Task.run", "provider_attr": None, "operation": "workflow"},
     {"package": "crewai.task", "object": "Task.execute_async", "provider_attr": None, "operation": "workflow"},
@@ -201,7 +202,10 @@ class CrewAIInstrumentor:
         self.service_name = service_name
         self.environment = environment
         self.agent_id = agent_id
-        if importlib.util.find_spec("crewai") is None:
+        try:
+            if importlib.util.find_spec("crewai") is None:
+                return
+        except Exception:
             return
         import logging
         logger = logging.getLogger(__name__)
@@ -243,10 +247,23 @@ class CrewAIInstrumentor:
 
             class_name = instance.__class__.__name__ if instance is not None else "Unknown"
             method_name = getattr(wrapped, "__name__", "call")
+            
+            # Default span name
             span_name = f"{class_name}.{method_name}"
+            
+            # Specialized span names per requirements
+            if operation == "invoke_agent":
+                agent_name = getattr(instance, "name", None) or getattr(instance, "role", "unknown")
+                span_name = f"invoke_agent ({agent_name})"
+            elif operation == "tool":
+                tool_name = getattr(instance, "name", None) or "unknown"
+                span_name = f"execute_tool ({tool_name})"
+            elif operation == "create_agent":
+                agent_name = getattr(instance, "name", None) or "unknown"
+                span_name = f"create_agent ({agent_name})"
 
             from iagentops.semconv import SemanticConvention as SC
-            op_type = SC.GEN_AI_OPERATION_TYPE_WORKFLOW if operation in (None, "workflow") else SC.GEN_AI_OPERATION_TYPE_CHAT
+            op_type = SC.GEN_AI_OPERATION_TYPE_WORKFLOW if operation in (None, "workflow", "invoke_agent") else SC.GEN_AI_OPERATION_TYPE_CHAT
             if operation == "embedding":
                 op_type = SC.GEN_AI_OPERATION_TYPE_EMBEDDING
 
@@ -279,6 +296,17 @@ class CrewAIInstrumentor:
                 span.set_attribute(SC.GEN_AI_REQUEST_MODEL, model)
                 span.set_attribute(SC.GEN_AI_LLM, model)
                 span.set_attribute(SC.GEN_AI_LLM_PROVIDER, provider)
+                span.set_attribute(SC.GEN_AI_PROVIDER_NAME, provider)
+                
+                # server info if available on instance
+                srv_addr = getattr(instance, "server_address", None) or getattr(instance, "base_url", None)
+                srv_port = getattr(instance, "server_port", None)
+                if srv_addr: span.set_attribute(SC.SERVER_ADDRESS, str(srv_addr))
+                if srv_port: span.set_attribute(SC.SERVER_PORT, srv_port)
+                
+                sys_instr = helpers.extract_system_instructions(instance, kwargs)
+                if sys_instr: span.set_attribute(SC.GEN_AI_SYSTEM_INSTRUCTIONS, sys_instr)
+
                 if model_version is not None:
                     span.set_attribute(SC.GEN_AI_REQUEST_MODEL_VERSION, model_version)
                 # if temperature is not None:
@@ -382,9 +410,13 @@ class CrewAIInstrumentor:
                 if operation == "tool":
                     tool_name = getattr(instance, "name", None) or getattr(instance, "tool_name", None) or "unknown"
                     tool_id = getattr(instance, "id", None) or getattr(instance, "tool_id", None)
-                    if tool_id is not None and not isinstance(tool_id, (str, int, float, bool, bytes)):
+                    if tool_id is None:
+                        tool_id = str(uuid.uuid4())
+                    
+                    if not isinstance(tool_id, (str, int, float, bool, bytes)):
                         tool_id = str(tool_id)
-                    span.set_attribute(SC.GEN_AI_TOOL_ID, tool_id or "unknown")
+                        
+                    span.set_attribute(SC.GEN_AI_TOOL_CALL_ID, tool_id)
                     span.set_attribute(SC.GEN_AI_TOOL_NAME, tool_name)
                     # "gen_ai.tool.type" -> function | extension | datastore
                     span.set_attribute(SC.GEN_AI_TOOL_TYPE, getattr(instance, "tool_type", "function"))

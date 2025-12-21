@@ -82,7 +82,10 @@ _instrumented = set()
 
 def is_package_available(package_name):
     """Check if a package is installed."""
-    return importlib.util.find_spec(package_name) is not None
+    try:
+        return importlib.util.find_spec(package_name) is not None
+    except (ImportError, AttributeError, ValueError):
+        return False
 
 def detect_frameworks():
     """Auto-detect which AI frameworks are installed."""

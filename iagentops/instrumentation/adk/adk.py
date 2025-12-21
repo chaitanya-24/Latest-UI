@@ -2,6 +2,7 @@ import time
 import importlib.util
 import json
 import traceback
+import uuid
 from opentelemetry.trace import Status, StatusCode
 from wrapt import wrap_function_wrapper
 from iagentops.otel import metrics, tracing
@@ -10,7 +11,7 @@ from iagentops.semconv import SemanticConvention as SC
 from iagentops.instrumentation.adk import helpers
 
 WRAPPED_METHODS = [
-    {"package": "google.adk.agents", "object": "Agent.run", "provider_attr": None, "operation": "agent_invocation"},
+    {"package": "google.adk.agents", "object": "Agent.run", "provider_attr": None, "operation": "invoke_agent"},
 ]
 
 class ADKInstrumentor:
@@ -32,7 +33,10 @@ class ADKInstrumentor:
 
         self._install_processor_filter()
 
-        if importlib.util.find_spec("google.adk") is None:
+        try:
+            if importlib.util.find_spec("google.adk") is None:
+                return
+        except Exception:
             return
         
         for m in WRAPPED_METHODS:
@@ -91,8 +95,22 @@ class ADKInstrumentor:
             
             class_name = instance.__class__.__name__ if instance is not None else "Unknown"
             method_name = getattr(wrapped, "__name__", "call")
+            
+            # Default span name
             span_name = f"{class_name}.{method_name}"
-            op_type = SC.GEN_AI_OPERATION_TYPE_WORKFLOW if operation == "workflow" else SC.GEN_AI_OPERATION_TYPE_CHAT
+            
+            # Specialized span names
+            if operation == "invoke_agent":
+                agent_name = getattr(instance, "name", None) or "unknown"
+                span_name = f"invoke_agent ({agent_name})"
+            elif operation == "tool":
+                tool_name = getattr(instance, "name", None) or "unknown"
+                span_name = f"execute_tool ({tool_name})"
+            elif operation == "create_agent":
+                agent_name = getattr(instance, "name", None) or "unknown"
+                span_name = f"create_agent ({agent_name})"
+
+            op_type = SC.GEN_AI_OPERATION_TYPE_WORKFLOW if operation in (None, "workflow", "invoke_agent") else SC.GEN_AI_OPERATION_TYPE_CHAT
 
             with self.tracer.start_as_current_span(span_name) as span:
                 # --- 2. Attributes ---
@@ -110,11 +128,20 @@ class ADKInstrumentor:
                 top_p = helpers.top_p(instance, kwargs)
                 model_version = helpers.find_model_version(instance, kwargs)
 
-                span.set_attribute(SC.GEN_AI_OPERATION, op_type)
-                span.set_attribute(SC.AGENT_FRAMEWORK, "google-adk")
                 span.set_attribute(SC.GEN_AI_SYSTEM, "google-adk")
                 span.set_attribute(SC.GEN_AI_REQUEST_MODEL, model_str)
                 span.set_attribute(SC.GEN_AI_LLM, model_str)
+                span.set_attribute(SC.GEN_AI_LLM_PROVIDER, provider)
+                span.set_attribute(SC.GEN_AI_PROVIDER_NAME, provider)
+                
+                # server info
+                srv_addr = getattr(instance, "server_address", None) or getattr(instance, "base_url", None)
+                srv_port = getattr(instance, "server_port", None)
+                if srv_addr: span.set_attribute(SC.SERVER_ADDRESS, str(srv_addr))
+                if srv_port: span.set_attribute(SC.SERVER_PORT, srv_port)
+
+                sys_instr = helpers.extract_system_instructions(instance, kwargs)
+                if sys_instr: span.set_attribute(SC.GEN_AI_SYSTEM_INSTRUCTIONS, sys_instr)
                 span.set_attribute(SC.GEN_AI_LLM_PROVIDER, provider)
                 
                 if model_version: span.set_attribute(SC.GEN_AI_REQUEST_MODEL_VERSION, model_version)

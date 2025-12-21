@@ -4,6 +4,7 @@ import json
 import traceback
 from typing import Any, Dict, List, Optional
 from uuid import UUID
+import uuid
 
 from opentelemetry.trace import Span, SpanKind, Status, StatusCode
 import opentelemetry.trace as trace
@@ -33,6 +34,16 @@ class IAgentOpsCallbackHandler(BaseCallbackHandler):
         self.agent_id = agent_id
         self.service_name = service_name
         self.environment = environment
+        self.spans = {}
+
+    def _get_span_name(self, name: str, op_type: str) -> str:
+        if op_type == "tool":
+            return f"execute_tool ({name})"
+        if op_type == "agent" or name.lower().endswith("agent"):
+            return f"invoke_agent ({name})"
+        if op_type == "chat":
+            return f"{name} chat"
+        return f"{name} {op_type}"
         
     def on_llm_start(
         self, serialized: Dict[str, Any], prompts: List[str], *, run_id: UUID, parent_run_id: Optional[UUID] = None, **kwargs: Any
@@ -59,7 +70,9 @@ class IAgentOpsCallbackHandler(BaseCallbackHandler):
             span.set_attribute(SC.GEN_AI_OPERATION, SC.GEN_AI_OPERATION_TYPE_CHAT)
             span.set_attribute(SC.GEN_AI_REQUEST_MODEL, model_name)
             span.set_attribute(SC.GEN_AI_LLM, model_name)
-            span.set_attribute(SC.GEN_AI_CONTENT_PROMPT, prompts[0] if prompts else "")
+            span.set_attribute(SC.GEN_AI_LLM_PROVIDER, "langchain") # Default
+            span.set_attribute(SC.GEN_AI_PROVIDER_NAME, "langchain")
+            span.set_attribute(SC.GEN_AI_INPUT_MESSAGES, json.dumps(prompts) if prompts else "")
             
             # Params
             if "invocation_params" in kwargs:
@@ -107,7 +120,7 @@ class IAgentOpsCallbackHandler(BaseCallbackHandler):
             # Completion
             if response.generations and response.generations[0]:
                 completion = response.generations[0][0].text
-                span.set_attribute(SC.GEN_AI_CONTENT_COMPLETION, completion[:5000])
+                span.set_attribute(SC.GEN_AI_OUTPUT_MESSAGES, completion[:5000])
 
             # Emit metrics
             metrics.emit_metrics(latency_ms, "langchain", input_tokens, output_tokens)
@@ -220,6 +233,8 @@ class IAgentOpsCallbackHandler(BaseCallbackHandler):
             self.spans[run_id] = (span, time.perf_counter())
             
             self._set_common_attributes(span, kwargs)
+            tool_id = str(uuid.uuid4())
+            span.set_attribute(SC.GEN_AI_TOOL_CALL_ID, tool_id)
             span.set_attribute(SC.GEN_AI_TOOL_NAME, name)
             span.set_attribute(SC.GEN_AI_INPUT_MESSAGES, input_str[:5000])
             

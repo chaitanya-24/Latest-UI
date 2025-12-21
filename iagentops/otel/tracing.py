@@ -172,7 +172,10 @@ def setup_tracer(service_name: str | None = None, environment: str | None = None
                     if use_console_exporter:
                         logger.info("Console exporter enabled")
                 
-                trace.set_tracer_provider(_tracer_provider)
+                try:
+                    trace.set_tracer_provider(_tracer_provider)
+                except Exception as e:
+                    logger.debug(f"TracerProvider already set or could not be set: {e}")
                 
                 # Initialize meter for agent registry metrics
                 from iagentops.otel import metrics as metrics_module

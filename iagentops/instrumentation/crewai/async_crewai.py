@@ -7,6 +7,7 @@ from iagentops.semconv import SemanticConvention as SC
 from iagentops import helpers
 import json
 import traceback
+import uuid
 
 WRAPPED_METHODS = [
     # Crew async workflow operations
@@ -174,10 +175,17 @@ class AsyncCrewAIInstrumentor:
         self.service_name = service_name
         self.environment = environment
         self.agent_id = agent_id
-        if importlib.util.find_spec("crewai") is None:
+        try:
+            if importlib.util.find_spec("crewai") is None:
+                return
+        except Exception:
             return
+        
         for m in WRAPPED_METHODS:
-            if importlib.util.find_spec(m["package"]) is None:
+            try:
+                if importlib.util.find_spec(m["package"]) is None:
+                    continue
+            except Exception:
                 continue
             wrap_function_wrapper(
                 m["package"], m["object"], self._wrap(m.get("provider_attr"), m.get("operation"))
@@ -203,7 +211,20 @@ class AsyncCrewAIInstrumentor:
 
             class_name = instance.__class__.__name__ if instance is not None else "Unknown"
             method_name = getattr(wrapped, "__name__", "call")
+            
+            # Default span name
             span_name = f"{class_name}.{method_name}"
+            
+            # Specialized span names per requirements
+            if operation == "invoke_agent":
+                agent_name = getattr(instance, "name", None) or getattr(instance, "role", "unknown")
+                span_name = f"invoke_agent ({agent_name})"
+            elif operation == "tool":
+                tool_name = getattr(instance, "name", None) or "unknown"
+                span_name = f"execute_tool ({tool_name})"
+            elif operation == "create_agent":
+                agent_name = getattr(instance, "name", None) or "unknown"
+                span_name = f"create_agent ({agent_name})"
 
             async def async_wrapper(*a, **k):
                 with self.tracer.start_as_current_span(span_name) as span:
@@ -218,6 +239,16 @@ class AsyncCrewAIInstrumentor:
                     span.set_attribute(SC.GEN_AI_REQUEST_MODEL, model)
                     span.set_attribute(SC.GEN_AI_LLM, model)
                     span.set_attribute(SC.GEN_AI_LLM_PROVIDER, provider)
+                    span.set_attribute(SC.GEN_AI_PROVIDER_NAME, provider)
+                    
+                    # server info
+                    srv_addr = getattr(instance, "server_address", None) or getattr(instance, "base_url", None)
+                    srv_port = getattr(instance, "server_port", None)
+                    if srv_addr: span.set_attribute(SC.SERVER_ADDRESS, str(srv_addr))
+                    if srv_port: span.set_attribute(SC.SERVER_PORT, srv_port)
+                    
+                    sys_instr = helpers.extract_system_instructions(instance, k)
+                    if sys_instr: span.set_attribute(SC.GEN_AI_SYSTEM_INSTRUCTIONS, sys_instr)
                     
                     # Context Propagation
                     ctx = helpers.get_active_context(k)
@@ -226,6 +257,20 @@ class AsyncCrewAIInstrumentor:
 
                     # Extract standard params
                     try:
+                        # tool metadata
+                        if operation == "tool":
+                            tool_name = getattr(instance, "name", None) or "unknown"
+                            tool_id = getattr(instance, "id", None) or getattr(instance, "tool_id", None)
+                            if tool_id is None:
+                                tool_id = str(uuid.uuid4())
+                            if not isinstance(tool_id, (str, int, float, bool, bytes)):
+                                tool_id = str(tool_id)
+                                
+                            span.set_attribute(SC.GEN_AI_TOOL_CALL_ID, tool_id)
+                            span.set_attribute(SC.GEN_AI_TOOL_NAME, tool_name)
+                            span.set_attribute(SC.GEN_AI_TOOL_TYPE, getattr(instance, "tool_type", "function"))
+                            span.set_attribute(SC.GEN_AI_TOOL_DESCRIPTION, getattr(instance, "description", ""))
+
                         max_tokens = helpers._find_max_tokens(instance, kwargs)
                         temperature = helpers.temperature(instance, kwargs)
                         top_p = helpers.top_p(instance, kwargs)
@@ -288,10 +333,6 @@ class AsyncCrewAIInstrumentor:
                         except Exception:
                             span.set_attribute(SC.GEN_AI_OUTPUT_MESSAGES, str(result))
 
-                        metrics.emit_metrics(latency_ms, provider, inp_t, out_t, model)
-                        return result
-
-
                         # Emit events
                         try:
                             prompt = helpers.extract_input_message(a, k)
@@ -306,7 +347,6 @@ class AsyncCrewAIInstrumentor:
                         except Exception:
                             pass
 
-                        # Emit metrics
                         metrics.emit_metrics(latency_ms, provider, inp_t, out_t, model)
                         return result
                     except Exception as e:

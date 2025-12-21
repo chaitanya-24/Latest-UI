@@ -9,6 +9,12 @@ class SemanticConvention:
     SERVER_PORT = "server.port"
     SERVER_ADDRESS = "server.address"
     ERROR_TYPE = "error.type"
+    GEN_AI_SERVER_REQUEST_DURATION = "gen_ai.server.request.duration"
+    GEN_AI_SERVER_TIME_PER_OUTPUT_TOKEN = "gen_ai.server.time_per_output_token"
+    GEN_AI_SERVER_TIME_TO_FIRST_TOKEN = "gen_ai.server.time_to_first_token"
+    GEN_AI_CLIENT_INFERENCE_OPERATION_DETAILS = "gen_ai.client.inference.operation.details"
+    GEN_AI_SYSTEM_INSTRUCTIONS = "gen_ai.system_instructions"
+    GEN_AI_PROVIDER_NAME = "gen_ai.provider.name"
 
     # GenAI metric names
     GEN_AI_CLIENT_TOKEN_USAGE = "gen_ai.client.token.usage"
@@ -101,3 +107,4 @@ class SemanticConvention:
     INVOKE_AGENT_SPAN = "invoke_agent ({gen_ai.agent.name})"
     CREATE_AGENT_SPAN = "create_agent ({gen_ai.agent.name})"
     EMBEDDING_SPAN = "embedding span"
+    EXECUTE_TOOL_SPAN = "execute_tool ({gen_ai.tool.name})"

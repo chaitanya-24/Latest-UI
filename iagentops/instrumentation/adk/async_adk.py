@@ -11,12 +11,12 @@ from iagentops.semconv import SemanticConvention as SC
 from iagentops.instrumentation.adk import helpers
 
 WRAPPED_METHODS = [
-    {"package": "google.adk.agents", "object": "Agent.run_async", "provider_attr": None, "operation": "agent_invocation"},
+    {"package": "google.adk.agents", "object": "Agent.run_async", "provider_attr": None, "operation": "invoke_agent"},
 ]
 
 class AsyncADKInstrumentor:
     def instrument(self, service_name="iagentops", environment="development", sdk_version="0.1.0", agent_id=None, server_address=None, server_port=None, collector_endpoint=None, use_console_exporter=True, exporter_protocol="http", **kwargs):
-        self.tracer = tracing.setup_tracer(
+        self.tracer = trac ing.setup_tracer(
             service_name=service_name, 
             environment=environment, 
             sdk_version=sdk_version,
@@ -88,8 +88,22 @@ class AsyncADKInstrumentor:
             
             class_name = instance.__class__.__name__ if instance is not None else "Unknown"
             method_name = getattr(wrapped, "__name__", "call")
+            
+            # Default span name
             span_name = f"{class_name}.{method_name}"
-            op_type = SC.GEN_AI_OPERATION_TYPE_WORKFLOW if operation == "workflow" else SC.GEN_AI_OPERATION_TYPE_CHAT
+            
+            # Specialized span names
+            if operation == "invoke_agent":
+                agent_name = getattr(instance, "name", None) or "unknown"
+                span_name = f"invoke_agent ({agent_name})"
+            elif operation == "tool":
+                tool_name = getattr(instance, "name", None) or "unknown"
+                span_name = f"execute_tool ({tool_name})"
+            elif operation == "create_agent":
+                agent_name = getattr(instance, "name", None) or "unknown"
+                span_name = f"create_agent ({agent_name})"
+
+            op_type = SC.GEN_AI_OPERATION_TYPE_WORKFLOW if operation in (None, "workflow", "invoke_agent") else SC.GEN_AI_OPERATION_TYPE_CHAT
 
             def _set_span_attributes(span):
                 # --- 2. Attributes ---
@@ -113,6 +127,16 @@ class AsyncADKInstrumentor:
                 span.set_attribute(SC.GEN_AI_REQUEST_MODEL, model_str)
                 span.set_attribute(SC.GEN_AI_LLM, model_str)
                 span.set_attribute(SC.GEN_AI_LLM_PROVIDER, provider)
+                span.set_attribute(SC.GEN_AI_PROVIDER_NAME, provider)
+                
+                # server info
+                srv_addr = getattr(instance, "server_address", None) or getattr(instance, "base_url", None)
+                srv_port = getattr(instance, "server_port", None)
+                if srv_addr: span.set_attribute(SC.SERVER_ADDRESS, str(srv_addr))
+                if srv_port: span.set_attribute(SC.SERVER_PORT, srv_port)
+                
+                sys_instr = helpers.extract_system_instructions(instance, kwargs)
+                if sys_instr: span.set_attribute(SC.GEN_AI_SYSTEM_INSTRUCTIONS, sys_instr)
                 
                 if mv: span.set_attribute(SC.GEN_AI_REQUEST_MODEL_VERSION, mv)
                 if temp: span.set_attribute(SC.GEN_AI_REQUEST_TEMPERATURE, temp)

@@ -131,7 +131,7 @@ def _setup_meter(resource: Resource = None, collector_endpoint: str = None, use_
         _operation_duration_histogram = _meter.create_histogram(
             name="gen_ai.client.operation.duration",
             description="GenAI operation duration",
-            unit="ms"
+            unit="s"
         )
         
         # Register shutdown
@@ -257,7 +257,7 @@ def emit_metrics(latency_ms, provider, input_tokens=0, output_tokens=0, model=No
         }
         if _AGENT_ID:
             attrs["agent_id"] = _AGENT_ID
-        _operation_duration_histogram.record(latency_ms, attrs)
+        _operation_duration_histogram.record(latency_ms / 1000.0, attrs)
     
     data = {
         "provider": provider,

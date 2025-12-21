@@ -48,7 +48,10 @@ class AsyncLangChainInstrumentor:
         self.environment = environment
         self.agent_id = agent_id
         
-        if importlib.util.find_spec("langchain") is None:
+        try:
+            if importlib.util.find_spec("langchain") is None:
+                return
+        except Exception:
             return
 
         logger = logging.getLogger(__name__)

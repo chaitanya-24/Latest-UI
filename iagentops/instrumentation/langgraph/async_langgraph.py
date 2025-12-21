@@ -7,6 +7,7 @@ from iagentops.semconv import SemanticConvention as SC
 from iagentops import helpers
 import json
 import traceback
+import uuid
 
 WRAPPED_METHODS = [
     {"package": "langgraph.llms.base", "object": "BaseLLM.apredict", "provider_attr": "client_name", "operation": "inference"},
@@ -60,9 +61,22 @@ class AsyncLangGraphInstrumentor:
 
             class_name = instance.__class__.__name__ if instance is not None else "Unknown"
             method_name = getattr(wrapped, "__name__", "call")
+            
+            # Default span name
             span_name = f"{class_name}.{method_name}"
+            
+            # Specialized span names per requirements
+            if operation == "invoke_agent":
+                agent_name = getattr(instance, "name", None) or "unknown"
+                span_name = f"invoke_agent ({agent_name})"
+            elif operation == "tool":
+                tool_name = getattr(instance, "name", None) or "unknown"
+                span_name = f"execute_tool ({tool_name})"
+            elif operation == "create_agent":
+                agent_name = getattr(instance, "name", None) or "unknown"
+                span_name = f"create_agent ({agent_name})"
 
-            op_type = SC.GEN_AI_OPERATION_TYPE_WORKFLOW if operation in (None, "workflow") else SC.GEN_AI_OPERATION_TYPE_CHAT
+            op_type = SC.GEN_AI_OPERATION_TYPE_WORKFLOW if operation in (None, "workflow", "invoke_agent") else SC.GEN_AI_OPERATION_TYPE_CHAT
             if operation == "embedding":
                 op_type = SC.GEN_AI_OPERATION_TYPE_EMBEDDING
 
@@ -95,6 +109,16 @@ class AsyncLangGraphInstrumentor:
 
                     span.set_attribute(SC.GEN_AI_LLM, model or "unknown")
                     span.set_attribute(SC.GEN_AI_LLM_PROVIDER, provider or "unknown")
+                    span.set_attribute(SC.GEN_AI_PROVIDER_NAME, provider or "unknown")
+                    
+                    # server info
+                    srv_addr = getattr(instance, "server_address", None) or getattr(instance, "base_url", None)
+                    srv_port = getattr(instance, "server_port", None)
+                    if srv_addr: span.set_attribute(SC.SERVER_ADDRESS, str(srv_addr))
+                    if srv_port: span.set_attribute(SC.SERVER_PORT, srv_port)
+
+                    sys_instr = helpers.extract_system_instructions(instance, k)
+                    if sys_instr: span.set_attribute(SC.GEN_AI_SYSTEM_INSTRUCTIONS, sys_instr)
                     if model_version is not None:
                         span.set_attribute(SC.GEN_AI_REQUEST_MODEL_VERSION,model_version)
                     # span.set_attribute(SC.GEN_AI_REQUEST_MODEL, model or "unknown")
@@ -167,8 +191,15 @@ class AsyncLangGraphInstrumentor:
 
                     # If this is a tool call, add tool metadata if present on instance
                     if operation == "tool":
-                        tool_name = getattr(instance, "name", None) or getattr(instance, "tool_name", None)
-                        span.set_attribute(SC.GEN_AI_TOOL_NAME, tool_name or "unknown")
+                        tool_name = getattr(instance, "name", None) or getattr(instance, "tool_name", None) or "unknown"
+                        tool_id = getattr(instance, "id", None) or getattr(instance, "tool_id", None)
+                        if tool_id is None:
+                            tool_id = str(uuid.uuid4())
+                        if not isinstance(tool_id, (str, int, float, bool, bytes)):
+                            tool_id = str(tool_id)
+                            
+                        span.set_attribute(SC.GEN_AI_TOOL_CALL_ID, tool_id)
+                        span.set_attribute(SC.GEN_AI_TOOL_NAME, tool_name)
                         span.set_attribute(SC.GEN_AI_TOOL_TYPE, getattr(instance, "tool_type", "function")) # default to function
                         span.set_attribute(SC.GEN_AI_TOOL_DESCRIPTION, getattr(instance, "description", ""))
 
