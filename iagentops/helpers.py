@@ -3,6 +3,7 @@ import logging
 import json
 import traceback
 import threading
+import uuid
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Tuple, Union
 
@@ -204,8 +205,25 @@ def detect_llm_provider(instance, provider_attr=None):
 
 def get_active_context(kwargs):
     ctx = _CONTEXT_CV.get().copy()
-    if "conversation_id" in kwargs: ctx["conversation_id"] = kwargs["conversation_id"]
-    if "data_source_id" in kwargs: ctx["data_source_id"] = kwargs["data_source_id"]
+    
+    # Check kwargs first
+    if "conversation_id" in kwargs: 
+        ctx["conversation_id"] = kwargs["conversation_id"]
+    if "data_source_id" in kwargs: 
+        ctx["data_source_id"] = kwargs["data_source_id"]
+        
+    # If still missing, generate and persist in ContextVar
+    modified = False
+    if not ctx.get("conversation_id"):
+        ctx["conversation_id"] = str(uuid.uuid4())
+        modified = True
+    if not ctx.get("data_source_id"):
+        ctx["data_source_id"] = str(uuid.uuid4())
+        modified = True
+        
+    if modified:
+        _CONTEXT_CV.set(ctx)
+        
     return ctx
 
 def _extract_agent_name(instance, kwargs):
@@ -243,7 +261,7 @@ def emit_agent_telemetry(span, instance, args, kwargs, result=None, model=None, 
     else:
         _agent_id_str = str(getattr(instance, "id", None) or getattr(instance, "agent_id", None) or "unknown")
         
-    agent_name = getattr(instance, "name", None) or getattr(instance, "agent_name", None) or "unknown"
+    agent_name = _extract_agent_name(instance, kwargs)
 
     # 3. Tools
     agent_tools = getattr(instance, "tools", [])
@@ -258,7 +276,7 @@ def emit_agent_telemetry(span, instance, args, kwargs, result=None, model=None, 
     # 5. Set attributes
     span.set_attribute(SC.GEN_AI_OPERATION, SC.GEN_AI_OPERATION_TYPE_WORKFLOW)
     span.set_attribute(SC.AGENT_ID, _agent_id_str)
-    span.set_attribute("gen_ai.agent.name", agent_name)
+    span.set_attribute(SC.GEN_AI_AGENT_NAME, agent_name)
     span.set_attribute("gen_ai.agent.tools", agent_tools)
     
     span.set_attribute(SC.GEN_AI_LLM, str(model))
@@ -342,8 +360,12 @@ def emit_agent_telemetry(span, instance, args, kwargs, result=None, model=None, 
 
     # Context
     ctx = get_active_context(kwargs)
-    span.set_attribute(SC.GEN_AI_CONVERSATION_ID, ctx.get("conversation_id", "unknown"))
-    span.set_attribute(SC.GEN_AI_DATA_SOURCE_ID, ctx.get("data_source_id", "unknown"))
+    span.set_attribute(SC.GEN_AI_CONVERSATION_ID, ctx.get("conversation_id"))
+    span.set_attribute(SC.GEN_AI_DATA_SOURCE_ID, ctx.get("data_source_id"))
+    
+    # Tool ID (unique per span/operation if not provided)
+    tool_id = kwargs.get("tool_id") or kwargs.get("tool_call_id") or str(uuid.uuid4())
+    span.set_attribute(SC.GEN_AI_TOOL_CALL_ID, tool_id)
 
     # IO
     try:

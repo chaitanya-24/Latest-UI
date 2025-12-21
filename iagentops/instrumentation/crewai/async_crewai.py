@@ -239,6 +239,11 @@ class AsyncCrewAIInstrumentor:
                     span.set_attribute("agent.id", _agent_id_val)
 
                     span.set_attribute(SC.GEN_AI_SYSTEM, "crewai")
+                    
+                    # Context propagation
+                    ctx = helpers.get_active_context(k)
+                    span.set_attribute(SC.GEN_AI_CONVERSATION_ID, ctx.get("conversation_id"))
+                    span.set_attribute(SC.GEN_AI_DATA_SOURCE_ID, ctx.get("data_source_id"))
                     span.set_attribute(SC.GEN_AI_REQUEST_MODEL, model)
                     span.set_attribute(SC.GEN_AI_LLM, model)
                     span.set_attribute(SC.GEN_AI_LLM_PROVIDER, provider)
@@ -298,6 +303,10 @@ class AsyncCrewAIInstrumentor:
                         latency_ms = latency_s * 1000
 
                         # Agent telemetry
+                        # If we have a crew ID, but no conversation_id in context, use crew ID
+                        if hasattr(instance, 'crew') and instance.crew and "conversation_id" not in k:
+                            k["conversation_id"] = str(instance.crew.id)
+
                         helpers.emit_agent_telemetry(
                             span=span,
                             instance=instance,

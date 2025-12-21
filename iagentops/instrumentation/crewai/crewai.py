@@ -432,12 +432,11 @@ class CrewAIInstrumentor:
                         task_id = str(task_id)
                     span.set_attribute(SC.GEN_AI_TASK_ID, task_id)
 
-                # Context propagation is now handled inside helper.emit_agent_telemetry
-                # or we can set it explicitly here too if operation is NOT an agent invocation
+                # Context propagation
                 if operation != "workflow":
                      ctx = helpers.get_active_context(kwargs)
-                     span.set_attribute(SC.GEN_AI_CONVERSATION_ID, ctx.get("conversation_id", "unknown"))
-                     span.set_attribute(SC.GEN_AI_DATA_SOURCE_ID, ctx.get("data_source_id", "unknown"))
+                     span.set_attribute(SC.GEN_AI_CONVERSATION_ID, ctx.get("conversation_id"))
+                     span.set_attribute(SC.GEN_AI_DATA_SOURCE_ID, ctx.get("data_source_id"))
 
                 import time
                 start = time.perf_counter()
@@ -465,26 +464,10 @@ class CrewAIInstrumentor:
 
                     # --- Agent telemetry ---
                     import iagentops.helpers as helpers_mod
-                    # Extract metadata
-                    agent_name = getattr(instance, 'role', None) or getattr(instance, 'agent_name', "unknown")
                     
-                    # Get Crew ID for conversation ID if possible
-                    conversation_id = "unknown"
-                    if hasattr(instance, 'crew') and instance.crew:
-                        conversation_id = str(instance.crew.id)
-
-                    # Set attributes
-                    span.set_attribute(SC.GEN_AI_AGENT_NAME, str(agent_name))
-                    span.set_attribute(SC.GEN_AI_CONVERSATION_ID, conversation_id)
-                    
-                    # Determine provider from model
-                    model_str = str(model).lower()
-                    if "azure" in model_str:
-                        span.set_attribute(SC.GEN_AI_MODEL_PROVIDER, "azure")
-                        span.set_attribute(SC.GEN_AI_PROVIDER_NAME, "azure")
-                    elif "openai" in model_str or "gpt" in model_str:
-                        span.set_attribute(SC.GEN_AI_MODEL_PROVIDER, "openai")
-                        span.set_attribute(SC.GEN_AI_PROVIDER_NAME, "openai")
+                    # If we have a crew ID, but no conversation_id in context, use crew ID
+                    if hasattr(instance, 'crew') and instance.crew and "conversation_id" not in kwargs:
+                        kwargs["conversation_id"] = str(instance.crew.id)
 
                     helpers_mod.emit_agent_telemetry(
                         span=span,

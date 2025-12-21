@@ -120,8 +120,8 @@ class ADKInstrumentor:
                 
                 # Context Propagation
                 ctx = helpers.get_active_context(kwargs)
-                span.set_attribute(SC.GEN_AI_CONVERSATION_ID, ctx.get("conversation_id", "unknown"))
-                span.set_attribute(SC.GEN_AI_DATA_SOURCE_ID, ctx.get("data_source_id", "unknown"))
+                span.set_attribute(SC.GEN_AI_CONVERSATION_ID, ctx.get("conversation_id"))
+                span.set_attribute(SC.GEN_AI_DATA_SOURCE_ID, ctx.get("data_source_id"))
 
                 max_tokens = helpers._find_max_tokens(instance, kwargs)
                 temperature = helpers.temperature(instance, kwargs)

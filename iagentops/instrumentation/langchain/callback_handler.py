@@ -161,8 +161,8 @@ class IAgentOpsCallbackHandler(BaseCallbackHandler):
         
         # Context Propagation
         ctx = helpers.get_active_context(kwargs or {})
-        span.set_attribute(SC.GEN_AI_CONVERSATION_ID, ctx.get("conversation_id", "unknown"))
-        span.set_attribute(SC.GEN_AI_DATA_SOURCE_ID, ctx.get("data_source_id", "unknown"))
+        span.set_attribute(SC.GEN_AI_CONVERSATION_ID, ctx.get("conversation_id"))
+        span.set_attribute(SC.GEN_AI_DATA_SOURCE_ID, ctx.get("data_source_id"))
 
     def on_chain_start(
         self, serialized: Dict[str, Any], inputs: Dict[str, Any], *, run_id: UUID, parent_run_id: Optional[UUID] = None, **kwargs: Any
