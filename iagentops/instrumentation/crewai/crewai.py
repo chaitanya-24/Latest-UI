@@ -465,6 +465,27 @@ class CrewAIInstrumentor:
 
                     # --- Agent telemetry ---
                     import iagentops.helpers as helpers_mod
+                    # Extract metadata
+                    agent_name = getattr(instance, 'role', None) or getattr(instance, 'agent_name', "unknown")
+                    
+                    # Get Crew ID for conversation ID if possible
+                    conversation_id = "unknown"
+                    if hasattr(instance, 'crew') and instance.crew:
+                        conversation_id = str(instance.crew.id)
+
+                    # Set attributes
+                    span.set_attribute(SC.GEN_AI_AGENT_NAME, str(agent_name))
+                    span.set_attribute(SC.GEN_AI_CONVERSATION_ID, conversation_id)
+                    
+                    # Determine provider from model
+                    model_str = str(model).lower()
+                    if "azure" in model_str:
+                        span.set_attribute(SC.GEN_AI_MODEL_PROVIDER, "azure")
+                        span.set_attribute(SC.GEN_AI_PROVIDER_NAME, "azure")
+                    elif "openai" in model_str or "gpt" in model_str:
+                        span.set_attribute(SC.GEN_AI_MODEL_PROVIDER, "openai")
+                        span.set_attribute(SC.GEN_AI_PROVIDER_NAME, "openai")
+
                     helpers_mod.emit_agent_telemetry(
                         span=span,
                         instance=instance,

@@ -69,52 +69,31 @@ class LangGraphInstrumentor:
             # In LangGraph, callbacks are usually passed inside 'config' dict: 
             # invoke(inputs, config={"callbacks": [...]})
             
-            try:
-                sig = inspect.signature(wrapped)
-                if instance is not None:
-                    bound = sig.bind(instance, *args, **kwargs)
-                else:
-                    bound = sig.bind(*args, **kwargs)
-                
-                # Check for config in bound arguments
-                config = bound.arguments.get("config", {})
-                if config is None:
-                    config = {}
-                
-                # In config, we have 'callbacks'
-                callbacks = config.get("callbacks", [])
-                if callbacks is None:
-                    callbacks = []
-                if not isinstance(callbacks, list):
-                    callbacks = [callbacks]
-                
-                # Avoid duplicate handlers
-                if not any(isinstance(c, IAgentOpsCallbackHandler) for c in callbacks):
-                    callbacks.append(handler)
-                    config["callbacks"] = callbacks
-                    bound.arguments["config"] = config
-                
-                return wrapped(*bound.args, **bound.kwargs)
-            except Exception:
-                # Fallback naive injection
-                try:
-                    config = kwargs.get("config", {})
-                    if config is None: config = {}
-                    
-                    if not isinstance(config, dict):
-                        # If config is not a dict, we might not be able to easily inject
-                        return wrapped(*args, **kwargs)
-                        
-                    callbacks = config.get("callbacks", [])
-                    if callbacks is None: callbacks = []
-                    if not isinstance(callbacks, list): callbacks = [callbacks]
-                    
-                    if not any(isinstance(c, IAgentOpsCallbackHandler) for c in callbacks):
-                        callbacks.append(handler)
-                        config["callbacks"] = callbacks
-                        kwargs["config"] = config
-                except:
-                    pass
+            # Get or create config
+            config = kwargs.get("config")
+            if config is None:
+                config = {}
+                kwargs["config"] = config
+            
+            # Ensure config is a dict
+            if not isinstance(config, dict):
                 return wrapped(*args, **kwargs)
+            
+            # Get or create callbacks list
+            callbacks = config.get("callbacks")
+            if callbacks is None:
+                callbacks = []
+            elif not isinstance(callbacks, list):
+                callbacks = [callbacks]
+            else:
+                # Make a copy to avoid modifying the original
+                callbacks = list(callbacks)
+            
+            # Avoid duplicate handlers
+            if not any(isinstance(c, IAgentOpsCallbackHandler) for c in callbacks):
+                callbacks.append(handler)
+                config["callbacks"] = callbacks
+            
+            return wrapped(*args, **kwargs)
 
         return wrapper

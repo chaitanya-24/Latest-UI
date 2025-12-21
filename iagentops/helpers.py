@@ -208,6 +208,20 @@ def get_active_context(kwargs):
     if "data_source_id" in kwargs: ctx["data_source_id"] = kwargs["data_source_id"]
     return ctx
 
+def _extract_agent_name(instance, kwargs):
+    """Unified agent name extraction."""
+    # Check instance attributes first (priority)
+    for attr in ['role', 'agent_name', 'name', '_name']:
+        val = getattr(instance, attr, None)
+        if val: return str(val)
+    
+    # Check kwargs
+    for key in ['agent_name', 'name', 'role']:
+        if key in kwargs and kwargs[key]:
+            return str(kwargs[key])
+            
+    return "unknown"
+
 # --- Main Telemetry Emitter ---
 
 def emit_agent_telemetry(span, instance, args, kwargs, result=None, model=None, duration=None, agent_id=None):
