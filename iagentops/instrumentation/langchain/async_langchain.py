@@ -8,6 +8,7 @@ from iagentops.semconv import SemanticConvention as SC
 from iagentops import helpers
 import json
 import traceback
+import inspect
 
 WRAPPED_METHODS = [
     {"package": "langchain.llms.base", "object": "BaseLLM.apredict", "provider_attr": "client_name", "operation": "inference"},
@@ -81,9 +82,17 @@ class AsyncLangChainInstrumentor:
                 environment=self.environment
             )
             
-            # Inject into callbacks
+            # Inject into callbacks safely using signature binding
             try:
-                callbacks = kwargs.get("callbacks", [])
+                sig = inspect.signature(wrapped)
+                # If instance is not None, it's a method call, sig likely includes 'self'
+                if instance is not None:
+                    bound = sig.bind(instance, *args, **kwargs)
+                else:
+                    bound = sig.bind(*args, **kwargs)
+                
+                # Check for callbacks in bound arguments
+                callbacks = bound.arguments.get("callbacks", [])
                 if callbacks is None:
                     callbacks = []
                 if not isinstance(callbacks, list):
@@ -92,11 +101,26 @@ class AsyncLangChainInstrumentor:
                 # Avoid duplicate handlers
                 if not any(isinstance(c, IAgentOpsCallbackHandler) for c in callbacks):
                     callbacks.append(handler)
-                    kwargs["callbacks"] = callbacks
+                    bound.arguments["callbacks"] = callbacks
+                    
+                # Use bound args/kwargs to call the original function
+                return wrapped(*bound.args, **bound.kwargs)
             except Exception:
-                pass
-
-            return wrapped(*args, **kwargs)
+                # If signature binding fails, try naive injection as fallback
+                try:
+                    if "callbacks" not in kwargs:
+                        # Only add if not in kwargs; still risky if in args but better than nothing
+                        kwargs["callbacks"] = [handler]
+                    else:
+                        cbs = kwargs["callbacks"]
+                        if cbs is None: cbs = []
+                        if not isinstance(cbs, list): cbs = [cbs]
+                        if not any(isinstance(c, IAgentOpsCallbackHandler) for c in cbs):
+                            cbs.append(handler)
+                            kwargs["callbacks"] = cbs
+                except:
+                    pass
+                return wrapped(*args, **kwargs)
 
         return wrapper
 

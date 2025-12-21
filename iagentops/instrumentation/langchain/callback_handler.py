@@ -122,9 +122,19 @@ class IAgentOpsCallbackHandler(BaseCallbackHandler):
                 completion = response.generations[0][0].text
                 span.set_attribute(SC.GEN_AI_OUTPUT_MESSAGES, completion[:5000])
 
-            # Emit metrics
-            metrics.emit_metrics(latency_ms, "langchain", input_tokens, output_tokens)
+            # Emit comprehensive telemetry
+            helpers.emit_agent_telemetry(
+                span=span,
+                instance=None, # LangChain handler doesn't have a direct LLM instance here
+                args=[],
+                kwargs=kwargs,
+                result=response,
+                model=kwargs.get("invocation_params", {}).get("model", "unknown"),
+                duration=latency_s,
+                agent_id=self.agent_id
+            )
 
+            # Standard cleanup
             span.set_status(Status(StatusCode.OK))
             span.end()
         except Exception as e:

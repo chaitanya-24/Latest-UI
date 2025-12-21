@@ -118,6 +118,15 @@ def stop_sequences(instance, kwargs):
 def find_model_version(instance, kwargs):
     return _extract_param(instance, kwargs, ['openai_api_version', 'api_version'])
 
+def choice_count(instance, kwargs):
+    return _extract_param(instance, kwargs, ['n', 'choice_count', 'candidate_count'])
+
+def encoding_formats(instance, kwargs):
+    return _extract_param(instance, kwargs, ['encoding_format', 'encoding_formats'])
+
+def output_type(instance, kwargs):
+    return _extract_param(instance, kwargs, ['response_format', 'output_type'])
+
 def extract_system_instructions(instance, kwargs):
     return _extract_param(instance, kwargs, ['system', 'system_message', 'system_instructions', 'instructions'])
 
@@ -255,6 +264,10 @@ def emit_agent_telemetry(span, instance, args, kwargs, result=None, model=None, 
         span.set_attribute(SC.GEN_AI_SERVER_TIME_PER_INPUT_TOKEN, duration / input_tokens)
     if output_tokens > 0:
         span.set_attribute(SC.GEN_AI_SERVER_TIME_PER_OUTPUT_TOKEN, duration / output_tokens)
+    
+    # Time to first token (estimate for sync calls)
+    if duration > 0:
+        span.set_attribute(SC.GEN_AI_SERVER_TIME_TO_FIRST_TOKEN, duration)
 
     # Server Address/Port
     srv_addr = getattr(instance, "server_address", None) or getattr(instance, "base_url", None)
@@ -272,6 +285,46 @@ def emit_agent_telemetry(span, instance, args, kwargs, result=None, model=None, 
     
     sys_instr = extract_system_instructions(instance, kwargs)
     if sys_instr: span.set_attribute(SC.GEN_AI_SYSTEM_INSTRUCTIONS, sys_instr)
+
+    # Missing table attributes
+    cc = choice_count(instance, kwargs)
+    if cc is not None: span.set_attribute(SC.GEN_AI_REQUEST_CHOICE_COUNT, cc)
+    
+    ef = encoding_formats(instance, kwargs)
+    if ef is not None: span.set_attribute(SC.GEN_AI_REQUEST_ENCODING_FORMATS, ef)
+    
+    ot = output_type(instance, kwargs)
+    if ot is not None: span.set_attribute(SC.GEN_AI_OUTPUT_TYPE, ot)
+    
+    fp = frequency_penalty(instance, kwargs)
+    if fp is not None: span.set_attribute(SC.GEN_AI_REQUEST_FREQUENCY_PENALTY, fp)
+    
+    pp = presence_penalty(instance, kwargs)
+    if pp is not None: span.set_attribute(SC.GEN_AI_REQUEST_PRESENCE_PENALTY, pp)
+    
+    sd = seed(instance, kwargs)
+    if sd is not None: span.set_attribute(SC.GEN_AI_REQUEST_SEED, sd)
+    
+    st = stop_sequences(instance, kwargs)
+    if st is not None: span.set_attribute(SC.GEN_AI_REQUEST_STOP_SEQUENCES, st)
+
+    # Inference operation details (all parameters as JSON)
+    try:
+        details = {
+            "temperature": temp,
+            "top_p": tp,
+            "max_tokens": mt,
+            "frequency_penalty": fp,
+            "presence_penalty": pp,
+            "seed": sd,
+            "stop": st,
+            "n": cc
+        }
+        # Filter None
+        details = {k: v for k, v in details.items() if v is not None}
+        span.set_attribute(SC.GEN_AI_CLIENT_INFERENCE_OPERATION_DETAILS, json.dumps(details))
+    except:
+        pass
 
     # Context
     ctx = get_active_context(kwargs)

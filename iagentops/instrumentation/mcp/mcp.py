@@ -75,6 +75,8 @@ class MCPInstrumentor:
                 if uri:
                     span_name = f"mcp.resource {uri}"
 
+            import time
+            start_time = time.perf_counter()
             with self.tracer.start_as_current_span(span_name, kind=SpanKind.CLIENT) as span:
                 span.set_attribute("service.name", self.service_name)
                 span.set_attribute("deployment.environment", self.environment)
@@ -82,7 +84,7 @@ class MCPInstrumentor:
                 # Set MCP-specific attributes
                 span.set_attribute(SC.GEN_AI_SYSTEM, "mcp")
                 if self.agent_id:
-                    span.set_attribute("agent.id", str(self.agent_id))
+                    span.set_attribute(SC.AGENT_ID, str(self.agent_id))
 
                 if operation == "tool" and tool_name:
                     span.set_attribute(SC.GEN_AI_MCP_TOOL_NAME, tool_name)
@@ -98,11 +100,14 @@ class MCPInstrumentor:
                 try:
                     # Execute async method
                     result = await wrapped(*args, **kwargs)
+                    end_time = time.perf_counter()
+                    duration = end_time - start_time
                     
+                    span.set_attribute(SC.GEN_AI_CLIENT_OPERATION_DURATION, duration)
+                    span.set_attribute(SC.GEN_AI_SERVER_REQUEST_DURATION, duration)
+
                     # Capture outputs
                     if operation == "tool":
-                        # MCP tool call returns a result object (CallToolResult)
-                        # typically has .content or similar
                         try:
                             if hasattr(result, "content"):
                                 span.set_attribute(SC.GEN_AI_OUTPUT_MESSAGES, str(result.content))
@@ -116,6 +121,10 @@ class MCPInstrumentor:
 
                 except Exception as e:
                     span.set_status(Status(StatusCode.ERROR, str(e)))
+                    try:
+                        span.set_attribute(SC.ERROR_TYPE, type(e).__name__)
+                    except Exception:
+                        pass
                     span.record_exception(e)
                     raise
 

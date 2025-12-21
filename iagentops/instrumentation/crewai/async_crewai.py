@@ -161,6 +161,9 @@ class AsyncCrewAIInstrumentor:
     def instrument(self, service_name="iagentops", environment="development", sdk_version="0.1.0",
                    agent_id=None, server_address=None, server_port=None, collector_endpoint=None,
                    use_console_exporter=True, exporter_protocol="http", **kwargs):
+        import os
+        os.environ["CREWAI_TELEMETRY_OPT_OUT"] = "true"
+        
         self.tracer = tracing.setup_tracer(
             service_name=service_name,
             environment=environment,
@@ -306,54 +309,14 @@ class AsyncCrewAIInstrumentor:
                             agent_id=getattr(self, "agent_id", None)
                         )
 
-                        # Standard metrics
-                        span.set_attribute(SC.GEN_AI_CLIENT_OPERATION_DURATION, latency_s)
-                        span.set_attribute("gen_ai.server.request.duration", latency_s)
-
-                        # Token usage
+                        # emit_agent_telemetry handles all 38 attributes
                         inp_t, out_t = helpers.extract_tokens(a, result, model)
-                        span.set_attribute(SC.GEN_AI_USAGE_INPUT_TOKENS, inp_t)
-                        span.set_attribute(SC.GEN_AI_USAGE_OUTPUT_TOKENS, out_t)
-
-                        tpi = (latency_s / inp_t) if inp_t else 0.0
-                        tpo = (latency_s / out_t) if out_t else 0.0
-                        span.set_attribute("gen_ai.server.time_per_input_token", tpi)
-                        span.set_attribute("gen_ai.server.time_per_output_token", tpo)
-                        
-                        # Serialize inputs/outputs for legacy support
-                        try:
-                            if a and len(a) >= 1:
-                                span.set_attribute(SC.GEN_AI_INPUT_MESSAGES, json.dumps(a[0]))
-                            else:
-                                span.set_attribute(SC.GEN_AI_INPUT_MESSAGES, "")
-                        except Exception:
-                            span.set_attribute(SC.GEN_AI_INPUT_MESSAGES, str(a if a else ""))
-                        try:
-                            span.set_attribute(SC.GEN_AI_OUTPUT_MESSAGES, json.dumps(result))
-                        except Exception:
-                            span.set_attribute(SC.GEN_AI_OUTPUT_MESSAGES, str(result))
-
-                        # Emit events
-                        try:
-                            prompt = helpers.extract_input_message(a, k)
-                            if prompt:
-                                span.add_event("gen_ai.content.prompt", {"gen_ai.prompt": prompt})
-                        except Exception:
-                            pass
-                        try:
-                            completion_text = result if isinstance(result, str) else str(result)
-                            if completion_text:
-                                span.add_event("gen_ai.content.completion", {"gen_ai.completion": completion_text})
-                        except Exception:
-                            pass
-
                         metrics.emit_metrics(latency_ms, provider, inp_t, out_t, model)
                         return result
                     except Exception as e:
                         span.set_status(Status(StatusCode.ERROR, str(e)))
-                        # Set a simple error type attribute for quick filtering
                         try:
-                            span.set_attribute("errortype", type(e).__name__)
+                            span.set_attribute(SC.ERROR_TYPE, type(e).__name__)
                         except Exception:
                             pass
                         tb = traceback.format_exc()

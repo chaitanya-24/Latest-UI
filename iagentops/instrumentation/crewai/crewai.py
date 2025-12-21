@@ -187,6 +187,9 @@ class CrewAIInstrumentor:
     """Instrumentor for CrewAI sync LLM calls."""
 
     def instrument(self, service_name="iagentops", environment="development", sdk_version="0.1.0", agent_id=None, server_address=None, server_port=None, collector_endpoint=None, use_console_exporter=True, exporter_protocol="http", **kwargs):
+        import os
+        os.environ["CREWAI_TELEMETRY_OPT_OUT"] = "true"
+        
         self.tracer = tracing.setup_tracer(
             service_name=service_name,
             environment=environment,
@@ -473,40 +476,17 @@ class CrewAIInstrumentor:
                         agent_id=getattr(self, "agent_id", None)
                     )
 
-                    # --- Legacy metrics/attributes (optional) ---
-                    from iagentops.otel import metrics
+                    # --- 5. Metrics & Cleanup ---
+                    # emit_agent_telemetry handles all 38 attributes
                     input_msg = helpers.extract_input_message(args, kwargs)
-                    try:
-                        span.set_attribute(SC.GEN_AI_INPUT_MESSAGES, json.dumps(input_msg))
-                    except Exception:
-                        span.set_attribute(SC.GEN_AI_INPUT_MESSAGES, str(input_msg))
-                    try:
-                        span.set_attribute(SC.GEN_AI_OUTPUT_MESSAGES, json.dumps(result))
-                    except Exception:
-                        span.set_attribute(SC.GEN_AI_OUTPUT_MESSAGES, str(result))
-                    span.set_attribute("gen_ai.response.model", model)
-                    span.set_attribute(SC.GEN_AI_RESPONSE_MODEL, model)
-
-                    # --- Token tracking only ---
                     input_tokens = helpers._safe_encode(input_msg, model)
                     output_tokens = helpers._safe_encode(str(result), model)
-                    span.set_attribute(SC.GEN_AI_USAGE_INPUT_TOKENS, input_tokens)
-                    span.set_attribute(SC.GEN_AI_USAGE_OUTPUT_TOKENS, output_tokens)
-                    span.set_attribute(SC.GEN_AI_CLIENT_OPERATION_DURATION, latency_s)
-                    span.set_attribute("gen_ai.server.request.duration", latency_s)
-
-                    tpi = (latency_s / input_tokens) if input_tokens else 0.0
-                    tpo = (latency_s / output_tokens) if output_tokens else 0.0
-                    span.set_attribute("gen_ai.server.time_per_input_token", tpi)
-                    span.set_attribute("gen_ai.server.time_per_output_token", tpo)
-
                     metrics.emit_metrics(latency_s * 1000, provider, input_tokens, output_tokens, model)
                     return result
                 except Exception as e:
                     span.set_status(Status(StatusCode.ERROR, str(e)))
-                    # Set a simple error type attribute for quick filtering
                     try:
-                        span.set_attribute("errortype", type(e).__name__)
+                        span.set_attribute(SC.ERROR_TYPE, type(e).__name__)
                     except Exception:
                         pass
                     tb = traceback.format_exc()

@@ -91,9 +91,16 @@ class VectorStoreInstrumentor:
                     if top_k is not None:
                         span.set_attribute(SC.DB_VECTOR_QUERY_TOP_K, top_k)
                 
+                import time
+                start_time = time.perf_counter()
                 try:
                     result = wrapped(*args, **kwargs)
+                    end_time = time.perf_counter()
+                    duration = end_time - start_time
                     
+                    span.set_attribute(SC.GEN_AI_CLIENT_OPERATION_DURATION, duration)
+                    span.set_attribute(SC.GEN_AI_SERVER_REQUEST_DURATION, duration)
+
                     # Capture result count
                     count = 0
                     if system == "chroma":
@@ -118,6 +125,10 @@ class VectorStoreInstrumentor:
                     return result
                 except Exception as e:
                     span.set_status(Status(StatusCode.ERROR, str(e)))
+                    try:
+                        span.set_attribute(SC.ERROR_TYPE, type(e).__name__)
+                    except Exception:
+                        pass
                     span.record_exception(e)
                     raise
 

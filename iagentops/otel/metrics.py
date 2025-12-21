@@ -83,15 +83,18 @@ def _setup_meter(resource: Resource = None, collector_endpoint: str = None, use_
             except Exception as e:
                 logger.error(f"Failed to initialize OTLP metric exporter: {e}", exc_info=True)
         
-        # Add console exporter if requested or as fallback
-        if use_console_exporter or not metric_readers:
+        # Add console exporter only if explicitly requested or if no backend is configured
+        if use_console_exporter:
             console_reader = PeriodicExportingMetricReader(
                 ConsoleMetricExporter(),
-                export_interval_millis=30000  # Export every 30 seconds
+                export_interval_millis=60000  # Less frequent console updates (every minute)
             )
             metric_readers.append(console_reader)
-            if use_console_exporter:
-                logger.info("Console metric exporter enabled")
+            logger.info("Console metric exporter enabled (JSON format)")
+        elif not metric_readers:
+            # If no OTLP and no console requested, we can still have our own summary logging 
+            # in emit_metrics, but we don't need the OTel PeriodicExportingMetricReader
+            pass
         
         _meter_provider = MeterProvider(
             resource=resource or Resource.create({"service.name": "iagentops"}),
@@ -118,7 +121,7 @@ def _setup_meter(resource: Resource = None, collector_endpoint: str = None, use_
         _last_received_gauge = _meter.create_observable_gauge(
             name="agent.metrics.last_received.timestamp",
             description="Timestamp of the last received metric from any agent",
-            callbacks=[lambda options: [metrics.Observation(_last_received_timestamp or 0, {"agent_id": _AGENT_ID} if _AGENT_ID else {})]],
+            callbacks=[lambda options: [metrics.Observation(_last_received_timestamp or 0, {"agent.id": _AGENT_ID} if _AGENT_ID else {})]],
             unit="s"
         )
 
@@ -171,7 +174,7 @@ def increment_registrations():
     if _registration_counter:
         attrs = {}
         if _AGENT_ID:
-            attrs["agent_id"] = _AGENT_ID
+            attrs["agent.id"] = _AGENT_ID
         _registration_counter.add(1, attrs)
 
 
@@ -203,7 +206,7 @@ def increment_audit_events(event_type: str = "llm_call"):
     if _audit_events_counter:
         attrs = {"event.type": event_type}
         if _AGENT_ID:
-            attrs["agent_id"] = _AGENT_ID
+            attrs["agent.id"] = _AGENT_ID
         _audit_events_counter.add(1, attrs)
 
 
@@ -238,7 +241,7 @@ def emit_metrics(latency_ms, provider, input_tokens=0, output_tokens=0, model=No
             "provider": provider or "unknown"
         }
         if _AGENT_ID:
-            common_attrs["agent_id"] = _AGENT_ID
+            common_attrs["agent.id"] = _AGENT_ID
             
         if input_tokens > 0:
             attrs_in = common_attrs.copy()
@@ -256,7 +259,7 @@ def emit_metrics(latency_ms, provider, input_tokens=0, output_tokens=0, model=No
             "provider": provider or "unknown"
         }
         if _AGENT_ID:
-            attrs["agent_id"] = _AGENT_ID
+            attrs["agent.id"] = _AGENT_ID
         _operation_duration_histogram.record(latency_ms / 1000.0, attrs)
     
     data = {

@@ -168,32 +168,26 @@ class ADKInstrumentor:
                         span.add_event("gen_ai.content.completion", {"gen_ai.completion": completion}, timestamp=now)
 
                     # --- 5. Usage & IO ---
-                    try:
-                        span.set_attribute(SC.GEN_AI_INPUT_MESSAGES, str(kwargs) if kwargs else str(args))
-                    except Exception:
-                        span.set_attribute(SC.GEN_AI_INPUT_MESSAGES, "unknown")
+                    # --- 5. Unified Telemetry ---
+                    helpers.emit_agent_telemetry(
+                        span=span,
+                        instance=instance,
+                        args=args,
+                        kwargs=kwargs,
+                        result=result,
+                        model=model_str,
+                        duration=latency_s,
+                        agent_id=self.agent_id
+                    )
 
-                    span.set_attribute(SC.GEN_AI_OUTPUT_MESSAGES, str(result))
-                    span.set_attribute(SC.GEN_AI_RESPONSE_MODEL, model_str)
-                    
-                    input_tokens, output_tokens = helpers.extract_tokens(args, result, model_str)
-                    span.set_attribute(SC.GEN_AI_USAGE_INPUT_TOKENS, input_tokens)
-                    span.set_attribute(SC.GEN_AI_USAGE_OUTPUT_TOKENS, output_tokens)
-                    span.set_attribute(SC.GEN_AI_CLIENT_OPERATION_DURATION, latency_s)
-                    span.set_attribute("gen_ai.server.request.duration", latency_s)
-
-                    tpi = (latency_s / input_tokens) if input_tokens else 0.0
-                    tpo = (latency_s / output_tokens) if output_tokens else 0.0
-                    span.set_attribute("gen_ai.server.time_per_input_token", tpi)
-                    span.set_attribute("gen_ai.server.time_per_output_token", tpo)
-
+                    # Emit metrics manually if needed, or emit_agent_telemetry can do it
                     metrics.emit_metrics(latency_ms, provider, input_tokens, output_tokens, model_str)
                     return result
 
                 except Exception as e:
                     span.set_status(Status(StatusCode.ERROR, str(e)))
                     try:
-                        span.set_attribute("errortype", type(e).__name__)
+                        span.set_attribute(SC.ERROR_TYPE, type(e).__name__)
                     except Exception:
                         pass
                     tb = traceback.format_exc()

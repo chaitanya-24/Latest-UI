@@ -173,7 +173,13 @@ def setup_tracer(service_name: str | None = None, environment: str | None = None
                         logger.info("Console exporter enabled")
                 
                 try:
-                    trace.set_tracer_provider(_tracer_provider)
+                    # Check if a real tracer provider is already set to avoid "Overriding of current TracerProvider" warning
+                    from opentelemetry.trace import NoOpTracerProvider, ProxyTracerProvider
+                    current_provider = trace.get_tracer_provider()
+                    if isinstance(current_provider, (NoOpTracerProvider, ProxyTracerProvider)):
+                        trace.set_tracer_provider(_tracer_provider)
+                    else:
+                        logger.debug("TracerProvider already set, skipping set_tracer_provider")
                 except Exception as e:
                     logger.debug(f"TracerProvider already set or could not be set: {e}")
                 
