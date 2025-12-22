@@ -103,6 +103,11 @@ class LangChainInstrumentor:
                 
                 # Try 'callbacks' top-level parameter
                 if "callbacks" in bound.arguments:
+                    # Persist framework in context
+                    c_ctx = kwargs.copy()
+                    c_ctx["framework"] = "langchain"
+                    helpers.get_active_context(c_ctx)
+
                     cbs = bound.arguments["callbacks"]
                     if cbs is None: cbs = []
                     if not isinstance(cbs, list): cbs = [cbs]

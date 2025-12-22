@@ -77,8 +77,13 @@ class OpenAIInstrumentor:
                 input_tokens = 0
                 output_tokens = 0
                 if hasattr(result, "usage") and result.usage:
-                    input_tokens = result.usage.prompt_tokens
-                    output_tokens = result.usage.completion_tokens
+                    input_tokens = getattr(result.usage, "prompt_tokens", 0)
+                    output_tokens = getattr(result.usage, "completion_tokens", 0)
+                    # For embeddings, sometimes total_tokens is used and completion_tokens is missing
+                    if output_tokens == 0 and hasattr(result.usage, "total_tokens"):
+                         # In embeddings, total_tokens = prompt_tokens. 
+                         # But let's be safe.
+                         pass
                 
                 metrics.emit_metrics(duration * 1000, "openai", input_tokens, output_tokens, model)
                 span.set_status(Status(StatusCode.OK))

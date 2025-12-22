@@ -113,7 +113,30 @@ class LangGraphInstrumentor:
                         callbacks.append(handler)
                         config["callbacks"] = callbacks
                 
-                return wrapped(*bound.args, **bound.kwargs)
+                # Create a top-level span for the LangGraph execution
+                span_name = f"LangGraph.{wrapped.__name__}"
+                with self.tracer.start_as_current_span(span_name) as span:
+                    span.set_attribute(SC.GEN_AI_SYSTEM, "langgraph")
+                    span.set_attribute(SC.AGENT_FRAMEWORK, "langgraph")
+                    span.set_attribute(SC.GEN_AI_OPERATION, SC.GEN_AI_OPERATION_TYPE_WORKFLOW)
+                    if self.agent_id:
+                        span.set_attribute(SC.AGENT_ID, str(self.agent_id))
+                    
+                    start_time = time.perf_counter()
+                    try:
+                        result = wrapped(*bound.args, **bound.kwargs)
+                        
+                        # Basic telemetry for the top-level span
+                        latency = time.perf_counter() - start_time
+                        span.set_attribute(SC.GEN_AI_SERVER_REQUEST_DURATION, latency)
+                        span.set_status(Status(StatusCode.OK))
+                        
+                        return result
+                    except Exception as e:
+                        span.set_status(Status(StatusCode.ERROR, str(e)))
+                        span.record_exception(e)
+                        raise
+
             except Exception:
                 # Fallback to original call if binding fails
                 return wrapped(*args, **kwargs)

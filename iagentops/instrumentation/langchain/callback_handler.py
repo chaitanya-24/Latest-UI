@@ -164,6 +164,9 @@ class IAgentOpsCallbackHandler(BaseCallbackHandler):
         if self.system:
             span.set_attribute(SC.GEN_AI_SYSTEM, self.system)
             span.set_attribute(SC.AGENT_FRAMEWORK, self.system)
+            # Persist framework in context so it propagates to LLM spans
+            if kwargs is None: kwargs = {}
+            kwargs["framework"] = self.system
         
         # Context Propagation
         ctx = helpers.get_active_context(kwargs or {})

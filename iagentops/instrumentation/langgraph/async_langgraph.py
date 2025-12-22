@@ -61,7 +61,8 @@ class AsyncLangGraphInstrumentor:
                 tracer=self.tracer,
                 agent_id=self.agent_id,
                 service_name=self.service_name,
-                environment=self.environment
+                environment=self.environment,
+                system="langgraph"
             )
             
             try:
@@ -71,44 +72,45 @@ class AsyncLangGraphInstrumentor:
                 else:
                     bound = sig.bind(*args, **kwargs)
                 
-                # Check for config in bound arguments
-                config = bound.arguments.get("config", {})
+                # LangGraph methods like ainvoke(input, config=None, ...)
+                config = bound.arguments.get("config")
+                
+                # If not found at top level, check if it's in a kwargs-like parameter
+                if config is None:
+                    for val in bound.arguments.values():
+                        if isinstance(val, dict) and "callbacks" in val:
+                            config = val
+                            break
+
                 if config is None:
                     config = {}
-                
-                # In config, we have 'callbacks'
-                callbacks = config.get("callbacks", [])
-                if callbacks is None:
-                    callbacks = []
-                if not isinstance(callbacks, list):
-                    callbacks = [callbacks]
-                
-                # Avoid duplicate handlers
-                if not any(isinstance(c, IAgentOpsCallbackHandler) for c in callbacks):
-                    callbacks.append(handler)
-                    config["callbacks"] = callbacks
-                    bound.arguments["config"] = config
-                
-                return wrapped(*bound.args, **bound.kwargs)
-            except Exception:
-                # Fallback naive injection
-                try:
-                    config = kwargs.get("config", {})
-                    if config is None: config = {}
-                    
-                    if not isinstance(config, dict):
-                        return wrapped(*args, **kwargs)
-                        
+                    if "config" in sig.parameters:
+                        bound.arguments["config"] = config
+                    else:
+                        for param in sig.parameters.values():
+                            if param.kind == param.VAR_KEYWORD:
+                                if param.name not in bound.arguments:
+                                    bound.arguments[param.name] = {}
+                                bound.arguments[param.name]["config"] = config
+                                break
+
+                if isinstance(config, dict):
                     callbacks = config.get("callbacks", [])
-                    if callbacks is None: callbacks = []
-                    if not isinstance(callbacks, list): callbacks = [callbacks]
+                    if callbacks is None:
+                        callbacks = []
+                    if not isinstance(callbacks, list):
+                        callbacks = [callbacks]
+                    else:
+                        callbacks = list(callbacks)
                     
                     if not any(isinstance(c, IAgentOpsCallbackHandler) for c in callbacks):
                         callbacks.append(handler)
                         config["callbacks"] = callbacks
-                        kwargs["config"] = config
-                except:
-                    pass
+                
+                return wrapped(*bound.args, **bound.kwargs)
+                
+            except Exception:
+                # Fallback to original call if binding fails
                 return wrapped(*args, **kwargs)
 
         return wrapper

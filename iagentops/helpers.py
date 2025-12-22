@@ -205,15 +205,18 @@ def detect_llm_provider(instance, provider_attr=None):
 
 def get_active_context(kwargs):
     ctx = _CONTEXT_CV.get().copy()
+    modified = False
     
     # Check kwargs first
     if "conversation_id" in kwargs: 
         ctx["conversation_id"] = kwargs["conversation_id"]
     if "data_source_id" in kwargs: 
         ctx["data_source_id"] = kwargs["data_source_id"]
+    if "framework" in kwargs:
+        ctx["framework"] = kwargs["framework"]
+        modified = True
         
     # If still missing, generate and persist in ContextVar
-    modified = False
     if not ctx.get("conversation_id"):
         ctx["conversation_id"] = str(uuid.uuid4())
         modified = True
@@ -237,6 +240,8 @@ def _extract_agent_name(instance, kwargs):
     for key in ['agent_name', 'name', 'role']:
         if key in kwargs and kwargs[key]:
             return str(kwargs[key])
+            
+    return "unknown"
             
 def detect_agent_framework(instance):
     """Detect agent framework from instance metadata."""
@@ -298,7 +303,8 @@ def emit_agent_telemetry(span, instance, args, kwargs, result=None, model=None, 
     span.set_attribute(SC.GEN_AI_PROVIDER_NAME, provider)
     
     # Framework detection
-    framework = system or detect_agent_framework(instance)
+    ctx = get_active_context(kwargs)
+    framework = system or ctx.get("framework") or detect_agent_framework(instance)
     if framework != "unknown":
         span.set_attribute(SC.AGENT_FRAMEWORK, framework)
         # Only set gen_ai.system if not already set or if it's currently unknown/generic
