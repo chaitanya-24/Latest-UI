@@ -67,20 +67,46 @@ class LangGraphInstrumentor:
             
             try:
                 sig = inspect.signature(wrapped)
-                bound = sig.bind(*args, **kwargs)
+                # Properly bind instance as 'self'
+                if instance is not None:
+                    bound = sig.bind(instance, *args, **kwargs)
+                else:
+                    bound = sig.bind(*args, **kwargs)
                 
                 # LangGraph methods like invoke(input, config=None, ...)
+                # config is typically a named parameter or in kwargs
                 config = bound.arguments.get("config")
+                
+                # If not found at top level, check if it's in a kwargs-like parameter
+                if config is None:
+                    for val in bound.arguments.values():
+                        if isinstance(val, dict) and "callbacks" in val:
+                            # This might be the config dict passed via **kwargs
+                            config = val
+                            break
+
                 if config is None:
                     config = {}
-                    bound.arguments["config"] = config
-                
+                    # Try to put it back into the right place
+                    if "config" in sig.parameters:
+                        bound.arguments["config"] = config
+                    else:
+                        # Put in kwargs if it exists
+                        for param in sig.parameters.values():
+                            if param.kind == param.VAR_KEYWORD:
+                                if param.name not in bound.arguments:
+                                    bound.arguments[param.name] = {}
+                                bound.arguments[param.name]["config"] = config
+                                break
+
                 if isinstance(config, dict):
                     callbacks = config.get("callbacks", [])
                     if callbacks is None:
                         callbacks = []
                     if not isinstance(callbacks, list):
                         callbacks = [callbacks]
+                    else:
+                        callbacks = list(callbacks)
                     
                     if not any(isinstance(c, IAgentOpsCallbackHandler) for c in callbacks):
                         callbacks.append(handler)
@@ -88,6 +114,7 @@ class LangGraphInstrumentor:
                 
                 return wrapped(*bound.args, **bound.kwargs)
             except Exception:
+                # Fallback to original call if binding fails
                 return wrapped(*args, **kwargs)
 
         return wrapper

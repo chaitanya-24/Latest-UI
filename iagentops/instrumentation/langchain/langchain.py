@@ -85,44 +85,92 @@ class LangChainInstrumentor:
                 environment=self.environment
             )
             
-            # Inject into callbacks safely using signature binding
             try:
                 sig = inspect.signature(wrapped)
-                # If instance is not None, it's a method call, sig likely includes 'self'
                 if instance is not None:
                     bound = sig.bind(instance, *args, **kwargs)
                 else:
                     bound = sig.bind(*args, **kwargs)
                 
-                # Check for callbacks in bound arguments
-                callbacks = bound.arguments.get("callbacks", [])
-                if callbacks is None:
-                    callbacks = []
-                if not isinstance(callbacks, list):
-                    callbacks = [callbacks]
+                # Search for where to put callbacks. 
+                # LangChain elements can have them in:
+                # 1. 'callbacks' named parameter
+                # 2. 'config' named parameter (as config['callbacks'])
+                # 3. 'kwargs' parameter (as kwargs['callbacks'] or kwargs['config']['callbacks'])
                 
-                # Avoid duplicate handlers
-                if not any(isinstance(c, IAgentOpsCallbackHandler) for c in callbacks):
-                    callbacks.append(handler)
-                    bound.arguments["callbacks"] = callbacks
+                found_in_config = False
+                
+                # Try 'callbacks' top-level parameter
+                if "callbacks" in bound.arguments:
+                    cbs = bound.arguments["callbacks"]
+                    if cbs is None: cbs = []
+                    if not isinstance(cbs, list): cbs = [cbs]
+                    else: cbs = list(cbs)
                     
-                # Use bound args/kwargs to call the original function
-                return wrapped(*bound.args, **bound.kwargs)
-            except Exception:
-                # If signature binding fails, try naive injection as fallback
-                try:
-                    if "callbacks" not in kwargs:
-                        # Only add if not in kwargs; still risky if in args but better than nothing
-                        kwargs["callbacks"] = [handler]
-                    else:
-                        cbs = kwargs["callbacks"]
+                    if not any(isinstance(c, IAgentOpsCallbackHandler) for c in cbs):
+                        cbs.append(handler)
+                        bound.arguments["callbacks"] = cbs
+                        found_in_config = True
+                
+                # Try 'config' top-level parameter
+                if not found_in_config and "config" in bound.arguments:
+                    config = bound.arguments["config"]
+                    if isinstance(config, dict):
+                        cbs = config.get("callbacks", [])
                         if cbs is None: cbs = []
                         if not isinstance(cbs, list): cbs = [cbs]
+                        else: cbs = list(cbs)
+                        
                         if not any(isinstance(c, IAgentOpsCallbackHandler) for c in cbs):
                             cbs.append(handler)
-                            kwargs["callbacks"] = cbs
-                except:
-                    pass
+                            config["callbacks"] = cbs
+                            found_in_config = True
+                            
+                # Try inside VAR_KEYWORD (**kwargs)
+                if not found_in_config:
+                    kwargs_param = next((p for p in sig.parameters.values() if p.kind == p.VAR_KEYWORD), None)
+                    if kwargs_param and kwargs_param.name in bound.arguments:
+                        extra_kwargs = bound.arguments[kwargs_param.name]
+                        
+                        # Check extra_kwargs['callbacks']
+                        if "callbacks" in extra_kwargs:
+                            cbs = extra_kwargs["callbacks"]
+                            if cbs is None: cbs = []
+                            if not isinstance(cbs, list): cbs = [cbs]
+                            else: cbs = list(cbs)
+                            if not any(isinstance(c, IAgentOpsCallbackHandler) for c in cbs):
+                                cbs.append(handler)
+                                extra_kwargs["callbacks"] = cbs
+                                found_in_config = True
+                        
+                        # Check extra_kwargs['config']['callbacks']
+                        if not found_in_config and "config" in extra_kwargs and isinstance(extra_kwargs["config"], dict):
+                            config = extra_kwargs["config"]
+                            cbs = config.get("callbacks", [])
+                            if cbs is None: cbs = []
+                            if not isinstance(cbs, list): cbs = [cbs]
+                            else: cbs = list(cbs)
+                            if not any(isinstance(c, IAgentOpsCallbackHandler) for c in cbs):
+                                cbs.append(handler)
+                                config["callbacks"] = cbs
+                                found_in_config = True
+
+                # If we still haven't found a place to put it and the method likely accepts it,
+                # we could add it to kwargs, but that's what causes "multiple values" if we are wrong.
+                # So we ONLY add to kwargs if 'callbacks' is NOT in 'sig.parameters' at all
+                # AND we didn't find it in config.
+                if not found_in_config and "callbacks" not in sig.parameters:
+                    kwargs_param = next((p for p in sig.parameters.values() if p.kind == p.VAR_KEYWORD), None)
+                    if kwargs_param:
+                        if kwargs_param.name not in bound.arguments:
+                            bound.arguments[kwargs_param.name] = {}
+                        if "callbacks" not in bound.arguments[kwargs_param.name]:
+                            bound.arguments[kwargs_param.name]["callbacks"] = [handler]
+
+                return wrapped(*bound.args, **bound.kwargs)
+                
+            except Exception:
+                # Fallback to naive but only if absolutely necessary
                 return wrapped(*args, **kwargs)
 
         return wrapper
