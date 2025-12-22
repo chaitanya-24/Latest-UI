@@ -315,12 +315,14 @@ class AsyncCrewAIInstrumentor:
                             result=result,
                             model=model,
                             duration=latency_s,
-                            agent_id=getattr(self, "agent_id", None)
+                            agent_id=getattr(self, "agent_id", None),
+                            system="crewai"
                         )
 
                         # emit_agent_telemetry handles all 38 attributes
                         inp_t, out_t = helpers.extract_tokens(a, result, model)
                         metrics.emit_metrics(latency_ms, provider, inp_t, out_t, model)
+                        span.set_status(Status(StatusCode.OK))
                         return result
                     except Exception as e:
                         span.set_status(Status(StatusCode.ERROR, str(e)))

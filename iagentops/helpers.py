@@ -238,11 +238,22 @@ def _extract_agent_name(instance, kwargs):
         if key in kwargs and kwargs[key]:
             return str(kwargs[key])
             
+def detect_agent_framework(instance):
+    """Detect agent framework from instance metadata."""
+    if not instance: return "unknown"
+    mod = instance.__class__.__module__.lower()
+    cls = instance.__class__.__name__.lower()
+    
+    if "langchain" in mod: return "langchain"
+    if "langgraph" in mod: return "langgraph"
+    if "crewai" in mod: return "crewai"
+    if "agent" in cls: return "adk"
+    
     return "unknown"
 
 # --- Main Telemetry Emitter ---
 
-def emit_agent_telemetry(span, instance, args, kwargs, result=None, model=None, duration=None, agent_id=None):
+def emit_agent_telemetry(span, instance, args, kwargs, result=None, model=None, duration=None, agent_id=None, system=None):
     """Add agent attributes and prompt/completion events to the span."""
     # 1. Model
     if not model or model == "unknown":
@@ -285,6 +296,14 @@ def emit_agent_telemetry(span, instance, args, kwargs, result=None, model=None, 
     provider = detect_llm_provider(instance)
     span.set_attribute(SC.GEN_AI_LLM_PROVIDER, provider)
     span.set_attribute(SC.GEN_AI_PROVIDER_NAME, provider)
+    
+    # Framework detection
+    framework = system or detect_agent_framework(instance)
+    if framework != "unknown":
+        span.set_attribute(SC.AGENT_FRAMEWORK, framework)
+        # Only set gen_ai.system if not already set or if it's currently unknown/generic
+        if framework != "adk":
+             span.set_attribute(SC.GEN_AI_SYSTEM, framework)
     
     span.set_attribute(SC.GEN_AI_USAGE_INPUT_TOKENS, input_tokens)
     span.set_attribute(SC.GEN_AI_USAGE_OUTPUT_TOKENS, output_tokens)

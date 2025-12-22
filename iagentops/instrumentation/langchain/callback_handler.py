@@ -29,11 +29,12 @@ class IAgentOpsCallbackHandler(BaseCallbackHandler):
     Captures traces for Chains, Tools, and LLM calls.
     """
 
-    def __init__(self, tracer=None, agent_id=None, service_name=None, environment=None):
+    def __init__(self, tracer=None, agent_id=None, service_name=None, environment=None, system=None):
         self.tracer = tracer or trace.get_tracer("iagentops")
         self.agent_id = agent_id
         self.service_name = service_name
         self.environment = environment
+        self.system = system
         self.spans = {}
 
     def _get_span_name(self, name: str, op_type: str) -> str:
@@ -131,7 +132,8 @@ class IAgentOpsCallbackHandler(BaseCallbackHandler):
                 result=response,
                 model=kwargs.get("invocation_params", {}).get("model", "unknown"),
                 duration=latency_s,
-                agent_id=self.agent_id
+                agent_id=self.agent_id,
+                system=self.system
             )
 
             # Standard cleanup
@@ -158,6 +160,10 @@ class IAgentOpsCallbackHandler(BaseCallbackHandler):
         span.set_attribute("deployment.environment", self.environment or "development")
         if self.agent_id:
             span.set_attribute("agent.id", str(self.agent_id))
+        
+        if self.system:
+            span.set_attribute(SC.GEN_AI_SYSTEM, self.system)
+            span.set_attribute(SC.AGENT_FRAMEWORK, self.system)
         
         # Context Propagation
         ctx = helpers.get_active_context(kwargs or {})

@@ -476,7 +476,8 @@ class CrewAIInstrumentor:
                         result=result,
                         model=model,
                         duration=latency_s,
-                        agent_id=getattr(self, "agent_id", None)
+                        agent_id=getattr(self, "agent_id", None),
+                        system="crewai"
                     )
 
                     # --- 5. Metrics & Cleanup ---
@@ -485,6 +486,7 @@ class CrewAIInstrumentor:
                     input_tokens = helpers._safe_encode(input_msg, model)
                     output_tokens = helpers._safe_encode(str(result), model)
                     metrics.emit_metrics(latency_s * 1000, provider, input_tokens, output_tokens, model)
+                    span.set_status(Status(StatusCode.OK))
                     return result
                 except Exception as e:
                     span.set_status(Status(StatusCode.ERROR, str(e)))

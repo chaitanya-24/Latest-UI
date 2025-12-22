@@ -82,7 +82,8 @@ class LangChainInstrumentor:
                 tracer=self.tracer,
                 agent_id=self.agent_id,
                 service_name=self.service_name,
-                environment=self.environment
+                environment=self.environment,
+                system="langchain"
             )
             
             try:
