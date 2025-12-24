@@ -74,59 +74,87 @@ class AsyncLangChainInstrumentor:
 
     def _wrap(self, operation=None):
         def wrapper(wrapped, instance, args, kwargs):
-            # Create handler
-            handler = IAgentOpsCallbackHandler(
-                tracer=self.tracer,
-                agent_id=self.agent_id,
-                service_name=self.service_name,
-                environment=self.environment,
-                system="langchain"
-            )
+            # Re-entrancy guard
+            if helpers._IN_INSTRUMENTATION.get():
+                return wrapped(*args, **kwargs)
             
-            # Persist framework in context
-            c_ctx = kwargs.copy()
-            c_ctx["framework"] = "langchain"
-            helpers.get_active_context(c_ctx)
-            
-            # Inject into callbacks safely using signature binding
+            token = helpers._IN_INSTRUMENTATION.set(True)
             try:
-                sig = inspect.signature(wrapped)
-                # If instance is not None, it's a method call, sig likely includes 'self'
-                if instance is not None:
-                    bound = sig.bind(instance, *args, **kwargs)
-                else:
-                    bound = sig.bind(*args, **kwargs)
+                # Detect actual framework (might be langgraph even if called via langchain)
+                framework = helpers.detect_agent_framework(instance)
                 
-                # Check for callbacks in bound arguments
-                callbacks = bound.arguments.get("callbacks", [])
-                if callbacks is None:
-                    callbacks = []
-                if not isinstance(callbacks, list):
-                    callbacks = [callbacks]
+                # Create handler
+                handler = IAgentOpsCallbackHandler(
+                    tracer=self.tracer,
+                    agent_id=self.agent_id,
+                    service_name=self.service_name,
+                    environment=self.environment,
+                    system=framework
+                )
                 
-                # Avoid duplicate handlers
-                if not any(isinstance(c, IAgentOpsCallbackHandler) for c in callbacks):
-                    callbacks.append(handler)
-                    bound.arguments["callbacks"] = callbacks
-                    
-                # Use bound args/kwargs to call the original function
-                return wrapped(*bound.args, **bound.kwargs)
-            except Exception:
-                # If signature binding fails, try naive injection as fallback
+                # Persist framework in context
+                c_ctx = kwargs.copy()
+                c_ctx["framework"] = framework
+                helpers.get_active_context(c_ctx)
+                
+                # Inject into callbacks safely
                 try:
-                    if "callbacks" not in kwargs:
-                        # Only add if not in kwargs; still risky if in args but better than nothing
-                        kwargs["callbacks"] = [handler]
-                    else:
-                        cbs = kwargs["callbacks"]
+                    sig = inspect.signature(wrapped)
+                    try:
+                        bound = sig.bind(instance, *args, **kwargs)
+                    except TypeError:
+                        # Fallback for already-bound or wrapper methods
+                        bound = sig.bind(*args, **kwargs)
+                    
+                    found_in_config = False
+                    
+                    # Try 'callbacks' top-level parameter
+                    if "callbacks" in bound.arguments:
+                        cbs = bound.arguments["callbacks"]
                         if cbs is None: cbs = []
                         if not isinstance(cbs, list): cbs = [cbs]
+                        else: cbs = list(cbs)
+                        
                         if not any(isinstance(c, IAgentOpsCallbackHandler) for c in cbs):
                             cbs.append(handler)
-                            kwargs["callbacks"] = cbs
-                except:
-                    pass
-                return wrapped(*args, **kwargs)
+                            bound.arguments["callbacks"] = cbs
+                            found_in_config = True
+                    
+                    # Try 'config' top-level parameter
+                    if not found_in_config and "config" in bound.arguments:
+                        config = bound.arguments["config"]
+                        if isinstance(config, dict):
+                            cbs = config.get("callbacks", [])
+                            if cbs is None: cbs = []
+                            if not isinstance(cbs, list): cbs = [cbs]
+                            else: cbs = list(cbs)
+                            
+                            if not any(isinstance(c, IAgentOpsCallbackHandler) for c in cbs):
+                                cbs.append(handler)
+                                config["callbacks"] = cbs
+                                found_in_config = True
+                    
+                    if not found_in_config:
+                        # Fallback for Runnable.ainvoke etc.
+                        if "callbacks" not in sig.parameters:
+                            kwargs_param = next((p for p in sig.parameters.values() if p.kind == p.VAR_KEYWORD), None)
+                            if kwargs_param:
+                                if kwargs_param.name not in bound.arguments:
+                                    bound.arguments[kwargs_param.name] = {}
+                                if "callbacks" not in bound.arguments[kwargs_param.name]:
+                                    bound.arguments[kwargs_param.name]["callbacks"] = [handler]
+
+                    return wrapped(*bound.args, **bound.kwargs)
+                except Exception:
+                    # Naive fallback
+                    if "callbacks" not in kwargs:
+                        kwargs["callbacks"] = [handler]
+                    elif isinstance(kwargs["callbacks"], list):
+                        if not any(isinstance(c, IAgentOpsCallbackHandler) for c in kwargs["callbacks"]):
+                            kwargs["callbacks"].append(handler)
+                    return wrapped(*args, **kwargs)
+            finally:
+                helpers._IN_INSTRUMENTATION.reset(token)
 
         return wrapper
 

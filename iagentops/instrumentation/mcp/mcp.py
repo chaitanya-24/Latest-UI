@@ -52,7 +52,7 @@ class MCPInstrumentor:
                 continue
 
     def _wrap(self, operation):
-        async def wrapper(wrapped, instance, args, kwargs):
+        def wrapper(wrapped, instance, args, kwargs):
             # Extract basic info
             span_name = f"mcp.{operation}"
             
@@ -75,65 +75,68 @@ class MCPInstrumentor:
                 if uri:
                     span_name = f"mcp.resource {uri}"
 
-            # Try to get context for conversation_id etc.
-            ctx = helpers.get_active_context(kwargs)
-            
-            import time
-            start_time = time.perf_counter()
-            with self.tracer.start_as_current_span(span_name, kind=SpanKind.CLIENT) as span:
-                span.set_attribute("service.name", self.service_name)
-                span.set_attribute("deployment.environment", self.environment)
+            async def async_wrapper(*a, **k):
+                # Try to get context for conversation_id etc.
+                ctx = helpers.get_active_context(k)
                 
-                # Context Propagation
-                span.set_attribute(SC.GEN_AI_CONVERSATION_ID, ctx.get("conversation_id"))
-                span.set_attribute(SC.GEN_AI_DATA_SOURCE_ID, ctx.get("data_source_id"))
-                
-                # Set MCP-specific attributes
-                span.set_attribute(SC.GEN_AI_SYSTEM, "mcp")
-                if self.agent_id:
-                    span.set_attribute(SC.AGENT_ID, str(self.agent_id))
-
-                if operation == "tool" and tool_name:
-                    span.set_attribute(SC.GEN_AI_MCP_TOOL_NAME, tool_name)
-                    # arguments
-                    arguments = None
-                    if len(args) > 1:
-                        arguments = args[1]
-                    elif "arguments" in kwargs:
-                        arguments = kwargs["arguments"]
-                    if arguments:
-                        span.set_attribute(SC.GEN_AI_INPUT_MESSAGES, json.dumps(arguments, default=str))
-
-                try:
-                    # Execute async method
-                    result = await wrapped(*args, **kwargs)
-                    latency = time.perf_counter() - start_time
+                import time
+                start_time = time.perf_counter()
+                with self.tracer.start_as_current_span(span_name, kind=SpanKind.CLIENT) as span:
+                    span.set_attribute("service.name", self.service_name)
+                    span.set_attribute("deployment.environment", self.environment)
                     
-                    # Capture metrics and other common attributes
-                    helpers.emit_agent_telemetry(
-                        span=span,
-                        instance=instance,
-                        args=args,
-                        kwargs=kwargs,
-                        result=result,
-                        model="mcp",
-                        duration=latency,
-                        agent_id=self.agent_id
-                    )
+                    # Context Propagation
+                    span.set_attribute(SC.GEN_AI_CONVERSATION_ID, ctx.get("conversation_id"))
+                    span.set_attribute(SC.GEN_AI_DATA_SOURCE_ID, ctx.get("data_source_id"))
                     
-                    # Ensure gen_ai.system is 'mcp' for the tool call
+                    # Set MCP-specific attributes
                     span.set_attribute(SC.GEN_AI_SYSTEM, "mcp")
-                  
-                    span.set_status(Status(StatusCode.OK))
-                    return result
+                    if self.agent_id:
+                        span.set_attribute(SC.AGENT_ID, str(self.agent_id))
 
-                except Exception as e:
-                    span.set_status(Status(StatusCode.ERROR, str(e)))
+                    if operation == "tool" and tool_name:
+                        span.set_attribute(SC.GEN_AI_MCP_TOOL_NAME, tool_name)
+                        # arguments
+                        arguments = None
+                        if len(a) > 1:
+                            arguments = a[1]
+                        elif "arguments" in k:
+                            arguments = k["arguments"]
+                        if arguments:
+                            span.set_attribute(SC.GEN_AI_INPUT_MESSAGES, json.dumps(arguments, default=str))
+
                     try:
-                        span.set_attribute(SC.ERROR_TYPE, type(e).__name__)
-                    except Exception:
-                        pass
-                    span.record_exception(e)
-                    raise
+                        # Execute async method
+                        result = await wrapped(*a, **k)
+                        latency = time.perf_counter() - start_time
+                        
+                        # Capture metrics and other common attributes
+                        helpers.emit_agent_telemetry(
+                            span=span,
+                            instance=instance,
+                            args=a,
+                            kwargs=k,
+                            result=result,
+                            model="mcp",
+                            duration=latency,
+                            agent_id=self.agent_id
+                        )
+                        
+                        # Ensure gen_ai.system is 'mcp' for the tool call
+                        span.set_attribute(SC.GEN_AI_SYSTEM, "mcp")
+                    
+                        span.set_status(Status(StatusCode.OK))
+                        return result
+
+                    except Exception as e:
+                        span.set_status(Status(StatusCode.ERROR, str(e)))
+                        try:
+                            span.set_attribute(SC.ERROR_TYPE, type(e).__name__)
+                        except Exception:
+                            pass
+                        span.record_exception(e)
+                        raise
+
+            return async_wrapper(*args, **kwargs)
 
         return wrapper
