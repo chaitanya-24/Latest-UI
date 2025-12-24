@@ -55,7 +55,7 @@ class AsyncLangGraphInstrumentor:
                 continue
 
     def _wrap(self, operation=None):
-        def wrapper(wrapped, instance, args, kwargs):
+        async def wrapper(wrapped, instance, args, kwargs):
             # Create our callback handler
             handler = IAgentOpsCallbackHandler(
                 tracer=self.tracer,
@@ -64,6 +64,11 @@ class AsyncLangGraphInstrumentor:
                 environment=self.environment,
                 system="langgraph"
             )
+            
+            # Persist framework in context
+            c_ctx = kwargs.copy()
+            c_ctx["framework"] = "langgraph"
+            helpers.get_active_context(c_ctx)
             
             try:
                 sig = inspect.signature(wrapped)
@@ -107,7 +112,29 @@ class AsyncLangGraphInstrumentor:
                         callbacks.append(handler)
                         config["callbacks"] = callbacks
                 
-                return wrapped(*bound.args, **bound.kwargs)
+                # Create a top-level span for the LangGraph execution
+                span_name = f"LangGraph.{wrapped.__name__}"
+                with self.tracer.start_as_current_span(span_name) as span:
+                    span.set_attribute(SC.GEN_AI_SYSTEM, "langgraph")
+                    span.set_attribute(SC.AGENT_FRAMEWORK, "langgraph")
+                    span.set_attribute(SC.GEN_AI_OPERATION, SC.GEN_AI_OPERATION_TYPE_WORKFLOW)
+                    if self.agent_id:
+                        span.set_attribute(SC.AGENT_ID, str(self.agent_id))
+                    
+                    start_time = time.perf_counter()
+                    try:
+                        result = await wrapped(*bound.args, **bound.kwargs)
+                        
+                        # Basic telemetry for the top-level span
+                        latency = time.perf_counter() - start_time
+                        span.set_attribute(SC.GEN_AI_SERVER_REQUEST_DURATION, latency)
+                        span.set_status(Status(StatusCode.OK))
+                        
+                        return result
+                    except Exception as e:
+                        span.set_status(Status(StatusCode.ERROR, str(e)))
+                        span.record_exception(e)
+                        raise
                 
             except Exception:
                 # Fallback to original call if binding fails

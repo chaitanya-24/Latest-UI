@@ -65,6 +65,10 @@ class LangGraphInstrumentor:
                 environment=self.environment,
                 system="langgraph"
             )
+            # Persist framework in context
+            c_ctx = kwargs.copy()
+            c_ctx["framework"] = "langgraph"
+            helpers.get_active_context(c_ctx)
             
             try:
                 sig = inspect.signature(wrapped)

@@ -79,8 +79,14 @@ class AsyncLangChainInstrumentor:
                 tracer=self.tracer,
                 agent_id=self.agent_id,
                 service_name=self.service_name,
-                environment=self.environment
+                environment=self.environment,
+                system="langchain"
             )
+            
+            # Persist framework in context
+            c_ctx = kwargs.copy()
+            c_ctx["framework"] = "langchain"
+            helpers.get_active_context(c_ctx)
             
             # Inject into callbacks safely using signature binding
             try:
