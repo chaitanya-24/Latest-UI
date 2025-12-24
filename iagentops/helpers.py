@@ -249,8 +249,8 @@ def detect_agent_framework(instance):
     mod = instance.__class__.__module__.lower()
     cls = instance.__class__.__name__.lower()
     
-    if "langchain" in mod: return "langchain"
     if "langgraph" in mod: return "langgraph"
+    if "langchain" in mod: return "langchain"
     if "crewai" in mod: return "crewai"
     if "agent" in cls: return "adk"
     
@@ -307,6 +307,11 @@ def emit_agent_telemetry(span, instance, args, kwargs, result=None, model=None, 
     framework = system or ctx.get("framework") or detect_agent_framework(instance)
     if framework != "unknown":
         span.set_attribute(SC.AGENT_FRAMEWORK, framework)
+        # Make it sticky in the context if not already set
+        if not ctx.get("framework"):
+            ctx["framework"] = framework
+            _CONTEXT_CV.set(ctx)
+            
         # Only set gen_ai.system if not already set or if it's currently unknown/generic
         if framework != "adk":
              span.set_attribute(SC.GEN_AI_SYSTEM, framework)

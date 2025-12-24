@@ -13,8 +13,10 @@ WRAPPED_METHODS = [
     # LangGraph CompiledGraph (async)
     {"package": "langgraph.graph.graph", "object": "CompiledGraph.ainvoke", "operation": "workflow"},
     {"package": "langgraph.graph.graph", "object": "CompiledGraph.astream", "operation": "workflow"},
-    {"package": "langgraph.graph.graph", "object": "CompiledStateGraph.ainvoke", "operation": "workflow"},
-    {"package": "langgraph.graph.graph", "object": "CompiledStateGraph.astream", "operation": "workflow"},
+    {"package": "langgraph.graph.state", "object": "CompiledStateGraph.ainvoke", "operation": "workflow"},
+    {"package": "langgraph.graph.state", "object": "CompiledStateGraph.astream", "operation": "workflow"},
+    {"package": "langgraph.pregel", "object": "Pregel.ainvoke", "operation": "workflow"},
+    {"package": "langgraph.pregel", "object": "Pregel.astream", "operation": "workflow"},
 ]
 
 class AsyncLangGraphInstrumentor:

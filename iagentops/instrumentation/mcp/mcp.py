@@ -75,11 +75,18 @@ class MCPInstrumentor:
                 if uri:
                     span_name = f"mcp.resource {uri}"
 
+            # Try to get context for conversation_id etc.
+            ctx = helpers.get_active_context(kwargs)
+            
             import time
             start_time = time.perf_counter()
             with self.tracer.start_as_current_span(span_name, kind=SpanKind.CLIENT) as span:
                 span.set_attribute("service.name", self.service_name)
                 span.set_attribute("deployment.environment", self.environment)
+                
+                # Context Propagation
+                span.set_attribute(SC.GEN_AI_CONVERSATION_ID, ctx.get("conversation_id"))
+                span.set_attribute(SC.GEN_AI_DATA_SOURCE_ID, ctx.get("data_source_id"))
                 
                 # Set MCP-specific attributes
                 span.set_attribute(SC.GEN_AI_SYSTEM, "mcp")
@@ -100,22 +107,23 @@ class MCPInstrumentor:
                 try:
                     # Execute async method
                     result = await wrapped(*args, **kwargs)
-                    end_time = time.perf_counter()
-                    duration = end_time - start_time
+                    latency = time.perf_counter() - start_time
                     
-                    span.set_attribute(SC.GEN_AI_CLIENT_OPERATION_DURATION, duration)
-                    span.set_attribute(SC.GEN_AI_SERVER_REQUEST_DURATION, duration)
-
-                    # Capture outputs
-                    if operation == "tool":
-                        try:
-                            if hasattr(result, "content"):
-                                span.set_attribute(SC.GEN_AI_OUTPUT_MESSAGES, str(result.content))
-                            else:
-                                span.set_attribute(SC.GEN_AI_OUTPUT_MESSAGES, str(result))
-                        except Exception:
-                            pass
+                    # Capture metrics and other common attributes
+                    helpers.emit_agent_telemetry(
+                        span=span,
+                        instance=instance,
+                        args=args,
+                        kwargs=kwargs,
+                        result=result,
+                        model="mcp",
+                        duration=latency,
+                        agent_id=self.agent_id
+                    )
                     
+                    # Ensure gen_ai.system is 'mcp' for the tool call
+                    span.set_attribute(SC.GEN_AI_SYSTEM, "mcp")
+                  
                     span.set_status(Status(StatusCode.OK))
                     return result
 
