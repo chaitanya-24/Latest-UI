@@ -192,8 +192,7 @@ class IAgentOpsCallbackHandler(BaseCallbackHandler):
             # Attributes
             self._set_common_attributes(span, kwargs)
             span.set_attribute(SC.GEN_AI_OPERATION, SC.GEN_AI_OPERATION_TYPE_WORKFLOW)
-            if self.system:
-                span.set_attribute(SC.GEN_AI_SYSTEM, self.system)
+            span.set_attribute(SC.GEN_AI_SYSTEM, "langchain")
             span.set_attribute("gen_ai.workflow.name", name)
             
             # Input

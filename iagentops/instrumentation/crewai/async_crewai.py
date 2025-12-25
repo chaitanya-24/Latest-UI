@@ -241,9 +241,7 @@ class AsyncCrewAIInstrumentor:
                     span.set_attribute(SC.GEN_AI_SYSTEM, "crewai")
                     
                     # Context propagation
-                    kc = k.copy()
-                    kc["framework"] = "crewai"
-                    ctx = helpers.get_active_context(kc)
+                    ctx = helpers.get_active_context(k)
                     span.set_attribute(SC.GEN_AI_CONVERSATION_ID, ctx.get("conversation_id"))
                     span.set_attribute(SC.GEN_AI_DATA_SOURCE_ID, ctx.get("data_source_id"))
                     span.set_attribute(SC.GEN_AI_REQUEST_MODEL, model)

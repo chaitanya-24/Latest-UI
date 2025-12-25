@@ -432,11 +432,12 @@ class CrewAIInstrumentor:
                     span.set_attribute(SC.GEN_AI_TASK_ID, task_id)
 
                 # Context propagation
-                k_ctx = kwargs.copy()
-                k_ctx["framework"] = "crewai"
-                ctx = helpers.get_active_context(k_ctx)
-                span.set_attribute(SC.GEN_AI_CONVERSATION_ID, ctx.get("conversation_id"))
-                span.set_attribute(SC.GEN_AI_DATA_SOURCE_ID, ctx.get("data_source_id"))
+                if operation != "workflow":
+                     k_ctx = kwargs.copy()
+                     k_ctx["framework"] = "crewai"
+                     ctx = helpers.get_active_context(k_ctx)
+                     span.set_attribute(SC.GEN_AI_CONVERSATION_ID, ctx.get("conversation_id"))
+                     span.set_attribute(SC.GEN_AI_DATA_SOURCE_ID, ctx.get("data_source_id"))
 
                 import time
                 start = time.perf_counter()

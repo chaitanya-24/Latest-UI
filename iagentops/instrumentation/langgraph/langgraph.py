@@ -11,9 +11,11 @@ from iagentops import helpers
 from iagentops.instrumentation.langchain.callback_handler import IAgentOpsCallbackHandler
 
 WRAPPED_METHODS = [
-    # LangGraph Pregel (base for CompiledGraph)
-    {"package": "langgraph.pregel", "object": "Pregel.invoke", "operation": "workflow"},
-    {"package": "langgraph.pregel", "object": "Pregel.stream", "operation": "workflow"},
+    # LangGraph CompiledGraph (sync)
+    {"package": "langgraph.graph.graph", "object": "CompiledGraph.invoke", "operation": "workflow"},
+    {"package": "langgraph.graph.graph", "object": "CompiledGraph.stream", "operation": "workflow"},
+    {"package": "langgraph.graph.graph", "object": "CompiledStateGraph.invoke", "operation": "workflow"},
+    {"package": "langgraph.graph.graph", "object": "CompiledStateGraph.stream", "operation": "workflow"},
 ]
 
 class LangGraphInstrumentor:
@@ -55,35 +57,43 @@ class LangGraphInstrumentor:
 
     def _wrap(self, operation=None):
         def wrapper(wrapped, instance, args, kwargs):
-            # Re-entrancy guard
-            if helpers._IN_INSTRUMENTATION.get():
-                return wrapped(*args, **kwargs)
-                
-            token = helpers._IN_INSTRUMENTATION.set(True)
-            try:
-                # Create our callback handler
-                handler = IAgentOpsCallbackHandler(
-                    tracer=self.tracer,
-                    agent_id=self.agent_id,
-                    service_name=self.service_name,
-                    environment=self.environment,
-                    system="langgraph"
-                )
-                # Persist framework in context
-                c_ctx = kwargs.copy()
-                c_ctx["framework"] = "langgraph"
-                helpers.get_active_context(c_ctx)
+            # Persist framework in context FIRST so all child spans inherit it
+            ctx_kwargs = {"framework": "langgraph"}
+            helpers.get_active_context(ctx_kwargs)
+            
+            # Create our callback handler
+            handler = IAgentOpsCallbackHandler(
+                tracer=self.tracer,
+                agent_id=self.agent_id,
+                service_name=self.service_name,
+                environment=self.environment,
+                system="langgraph"
+            )
+            
+            # Create a top-level span for the LangGraph execution
+            span_name = f"LangGraph.{wrapped.__name__}"
+            with self.tracer.start_as_current_span(span_name) as span:
+                # Set framework attributes on the top-level span
+                span.set_attribute(SC.GEN_AI_SYSTEM, "langgraph")
+                span.set_attribute(SC.AGENT_FRAMEWORK, "langgraph")
+                span.set_attribute(SC.GEN_AI_OPERATION, SC.GEN_AI_OPERATION_TYPE_WORKFLOW)
+                span.set_attribute("service.name", self.service_name or "iagentops")
+                span.set_attribute("deployment.environment", self.environment or "development")
+                if self.agent_id:
+                    span.set_attribute(SC.AGENT_ID, str(self.agent_id))
                 
                 try:
                     sig = inspect.signature(wrapped)
-                    try:
+                    # Properly bind instance as 'self'
+                    if instance is not None:
                         bound = sig.bind(instance, *args, **kwargs)
-                    except TypeError:
+                    else:
                         bound = sig.bind(*args, **kwargs)
                     
                     # LangGraph methods like invoke(input, config=None, ...)
                     config = bound.arguments.get("config")
                     
+                    # If not found at top level, check if it's in a kwargs-like parameter
                     if config is None:
                         for val in bound.arguments.values():
                             if isinstance(val, dict) and "callbacks" in val:
@@ -104,36 +114,43 @@ class LangGraphInstrumentor:
 
                     if isinstance(config, dict):
                         callbacks = config.get("callbacks", [])
-                        if callbacks is None: callbacks = []
-                        if not isinstance(callbacks, list): callbacks = [callbacks]
-                        else: callbacks = list(callbacks)
+                        if callbacks is None:
+                            callbacks = []
+                        if not isinstance(callbacks, list):
+                            callbacks = [callbacks]
+                        else:
+                            callbacks = list(callbacks)
                         
                         if not any(isinstance(c, IAgentOpsCallbackHandler) for c in callbacks):
                             callbacks.append(handler)
                             config["callbacks"] = callbacks
                     
-                    span_name = f"LangGraph.{wrapped.__name__}"
-                    with self.tracer.start_as_current_span(span_name) as span:
-                        span.set_attribute(SC.GEN_AI_SYSTEM, "langgraph")
-                        span.set_attribute(SC.AGENT_FRAMEWORK, "langgraph")
-                        span.set_attribute(SC.GEN_AI_OPERATION, SC.GEN_AI_OPERATION_TYPE_WORKFLOW)
-                        if self.agent_id:
-                            span.set_attribute(SC.AGENT_ID, str(self.agent_id))
+                    start_time = time.perf_counter()
+                    try:
+                        result = wrapped(*bound.args, **bound.kwargs)
                         
-                        start_time = time.perf_counter()
-                        try:
-                            result = wrapped(*bound.args, **bound.kwargs)
-                            latency = time.perf_counter() - start_time
-                            span.set_attribute(SC.GEN_AI_SERVER_REQUEST_DURATION, latency)
-                            span.set_status(Status(StatusCode.OK))
-                            return result
-                        except Exception as e:
-                            span.set_status(Status(StatusCode.ERROR, str(e)))
-                            span.record_exception(e)
-                            raise
+                        latency = time.perf_counter() - start_time
+                        span.set_attribute(SC.GEN_AI_SERVER_REQUEST_DURATION, latency)
+                        span.set_status(Status(StatusCode.OK))
+                        
+                        return result
+                    except Exception as e:
+                        span.set_status(Status(StatusCode.ERROR, str(e)))
+                        span.record_exception(e)
+                        raise
+
                 except Exception:
-                    return wrapped(*args, **kwargs)
-            finally:
-                helpers._IN_INSTRUMENTATION.reset(token)
+                    # Fallback to original call if binding fails
+                    start_time = time.perf_counter()
+                    try:
+                        result = wrapped(*args, **kwargs)
+                        latency = time.perf_counter() - start_time
+                        span.set_attribute(SC.GEN_AI_SERVER_REQUEST_DURATION, latency)
+                        span.set_status(Status(StatusCode.OK))
+                        return result
+                    except Exception as e:
+                        span.set_status(Status(StatusCode.ERROR, str(e)))
+                        span.record_exception(e)
+                        raise
 
         return wrapper

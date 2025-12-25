@@ -243,27 +243,16 @@ def _extract_agent_name(instance, kwargs):
             
     return "unknown"
             
-# Re-entrancy guard to avoid double-wrapping recursion
-_IN_INSTRUMENTATION = contextvars.ContextVar("in_instrumentation", default=False)
-
 def detect_agent_framework(instance):
     """Detect agent framework from instance metadata."""
     if not instance: return "unknown"
     mod = instance.__class__.__module__.lower()
     cls = instance.__class__.__name__.lower()
     
-    # Check LangGraph specific modules or class names
-    if "langgraph" in mod or "pregel" in cls:
-        return "langgraph"
-    
-    if "langchain" in mod:
-        return "langchain"
-        
-    if "crewai" in mod:
-        return "crewai"
-        
-    if "agent" in cls:
-        return "adk"
+    if "langchain" in mod: return "langchain"
+    if "langgraph" in mod: return "langgraph"
+    if "crewai" in mod: return "crewai"
+    if "agent" in cls: return "adk"
     
     return "unknown"
 
@@ -318,11 +307,6 @@ def emit_agent_telemetry(span, instance, args, kwargs, result=None, model=None, 
     framework = system or ctx.get("framework") or detect_agent_framework(instance)
     if framework != "unknown":
         span.set_attribute(SC.AGENT_FRAMEWORK, framework)
-        # Make it sticky in the context if not already set
-        if not ctx.get("framework"):
-            ctx["framework"] = framework
-            _CONTEXT_CV.set(ctx)
-            
         # Only set gen_ai.system if not already set or if it's currently unknown/generic
         if framework != "adk":
              span.set_attribute(SC.GEN_AI_SYSTEM, framework)
