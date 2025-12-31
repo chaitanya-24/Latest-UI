@@ -70,7 +70,9 @@ class OpenAIInstrumentor:
                     result=result,
                     model=model,
                     duration=duration,
-                    agent_id=self.agent_id
+                    agent_id=self.agent_id,
+                    system="openai",
+                    operation=op_type
                 )
                 
                 # Token usage for metrics

@@ -154,19 +154,25 @@ def extract_input_message(args, kwargs):
         if isinstance(v, str): return v
     return ""
 
-def extract_tokens(args, result, model: str | None = None):
+def extract_tokens(args, kwargs, result, model: str | None = None):
     """Compute (input_tokens, output_tokens)."""
     input_tokens = 0
     output_tokens = 0
     try:
-        input_text = extract_input_message(args, {})
+        input_text = extract_input_message(args, kwargs or {})
         input_tokens = _safe_encode(input_text, model)
 
         if result is not None:
             if isinstance(result, str):
                 output_tokens = _safe_encode(result, model)
             elif isinstance(result, dict) and "usage" in result:
-                output_tokens = int(result["usage"].get("completion_tokens", 0))
+                usage = result["usage"]
+                input_tokens = usage.get("prompt_tokens", input_tokens)
+                output_tokens = usage.get("completion_tokens", 0)
+            elif hasattr(result, "usage") and result.usage:
+                usage = result.usage
+                input_tokens = getattr(usage, "prompt_tokens", input_tokens)
+                output_tokens = getattr(usage, "completion_tokens", 0)
             elif hasattr(result, "content"):
                 output_tokens = _safe_encode(getattr(result, "content", ""), model)
             elif hasattr(result, "raw"):
@@ -212,7 +218,9 @@ def get_active_context(kwargs):
         ctx["conversation_id"] = kwargs["conversation_id"]
     if "data_source_id" in kwargs: 
         ctx["data_source_id"] = kwargs["data_source_id"]
-    if "framework" in kwargs:
+    # Only set framework if not already set (preserve most specific framework)
+    # This ensures LangGraph takes precedence over LangChain when used together
+    if "framework" in kwargs and not ctx.get("framework"):
         ctx["framework"] = kwargs["framework"]
         modified = True
         
@@ -258,7 +266,7 @@ def detect_agent_framework(instance):
 
 # --- Main Telemetry Emitter ---
 
-def emit_agent_telemetry(span, instance, args, kwargs, result=None, model=None, duration=None, agent_id=None, system=None):
+def emit_agent_telemetry(span, instance, args, kwargs, result=None, model=None, duration=None, agent_id=None, system=None, operation=None):
     """Add agent attributes and prompt/completion events to the span."""
     # 1. Model
     if not model or model == "unknown":
@@ -285,12 +293,12 @@ def emit_agent_telemetry(span, instance, args, kwargs, result=None, model=None, 
         agent_tools = ", ".join([getattr(t, "name", str(t)) for t in agent_tools])
 
     # 4. Tokens & Metrics
-    input_tokens, output_tokens = extract_tokens(args, result, str(model))
+    input_tokens, output_tokens = extract_tokens(args, kwargs, result, str(model))
     token_usage = input_tokens + output_tokens
     duration = duration or 0
 
     # 5. Set attributes
-    span.set_attribute(SC.GEN_AI_OPERATION, SC.GEN_AI_OPERATION_TYPE_WORKFLOW)
+    span.set_attribute(SC.GEN_AI_OPERATION, operation or SC.GEN_AI_OPERATION_TYPE_WORKFLOW)
     span.set_attribute(SC.AGENT_ID, _agent_id_str)
     span.set_attribute(SC.GEN_AI_AGENT_NAME, agent_name)
     span.set_attribute("gen_ai.agent.tools", agent_tools)
@@ -298,18 +306,30 @@ def emit_agent_telemetry(span, instance, args, kwargs, result=None, model=None, 
     span.set_attribute(SC.GEN_AI_LLM, str(model))
     span.set_attribute(SC.GEN_AI_REQUEST_MODEL, str(model))
     
+    # Response model
+    resp_model = getattr(result, "model", None) if result else None
+    if resp_model:
+        span.set_attribute(SC.GEN_AI_RESPONSE_MODEL, str(resp_model))
+    
     provider = detect_llm_provider(instance)
     span.set_attribute(SC.GEN_AI_LLM_PROVIDER, provider)
     span.set_attribute(SC.GEN_AI_PROVIDER_NAME, provider)
     
     # Framework detection
     ctx = get_active_context(kwargs)
-    framework = system or ctx.get("framework") or detect_agent_framework(instance)
+    framework = ctx.get("framework") or detect_agent_framework(instance)
     if framework != "unknown":
         span.set_attribute(SC.AGENT_FRAMEWORK, framework)
-        # Only set gen_ai.system if not already set or if it's currently unknown/generic
-        if framework != "adk":
-             span.set_attribute(SC.GEN_AI_SYSTEM, framework)
+    
+    # System detection (provider vs framework)
+    # Prefer explicit system (provider), then detected provider, then framework
+    provider = detect_llm_provider(instance)
+    if system:
+        span.set_attribute(SC.GEN_AI_SYSTEM, system)
+    elif provider != "unknown":
+        span.set_attribute(SC.GEN_AI_SYSTEM, provider)
+    elif framework != "unknown" and framework != "adk":
+        span.set_attribute(SC.GEN_AI_SYSTEM, framework)
     
     span.set_attribute(SC.GEN_AI_USAGE_INPUT_TOKENS, input_tokens)
     span.set_attribute(SC.GEN_AI_USAGE_OUTPUT_TOKENS, output_tokens)
@@ -388,19 +408,63 @@ def emit_agent_telemetry(span, instance, args, kwargs, result=None, model=None, 
     span.set_attribute(SC.GEN_AI_CONVERSATION_ID, ctx.get("conversation_id"))
     span.set_attribute(SC.GEN_AI_DATA_SOURCE_ID, ctx.get("data_source_id"))
     
-    # Tool ID (unique per span/operation if not provided)
-    tool_id = kwargs.get("tool_id") or kwargs.get("tool_call_id") or str(uuid.uuid4())
-    span.set_attribute(SC.GEN_AI_TOOL_CALL_ID, tool_id)
+    # Tool ID
+    tool_id = kwargs.get("tool_id") or kwargs.get("tool_call_id")
+    if not tool_id and result:
+        # Check if result (OpenAI) has tool calls
+        try:
+            if hasattr(result, "choices") and result.choices:
+                choice = result.choices[0]
+                if hasattr(choice, "message") and hasattr(choice.message, "tool_calls") and choice.message.tool_calls:
+                    tool_id = choice.message.tool_calls[0].id
+        except: pass
+    
+    if tool_id:
+        span.set_attribute(SC.GEN_AI_TOOL_CALL_ID, tool_id)
 
     # IO
     try:
-        span.set_attribute(SC.GEN_AI_INPUT_MESSAGES, json.dumps(args) if args else str(kwargs))
+        # Extract meaningful input messages
+        input_msg = kwargs.get("messages") or kwargs.get("prompt") or kwargs.get("input")
+        if not input_msg and args:
+            for arg in args:
+                if isinstance(arg, list) and len(arg) > 0: input_msg = arg; break
+                if isinstance(arg, str): input_msg = arg; break
+        
+        if input_msg:
+            if isinstance(input_msg, (list, dict)):
+                span.set_attribute(SC.GEN_AI_INPUT_MESSAGES, json.dumps(input_msg))
+            else:
+                span.set_attribute(SC.GEN_AI_INPUT_MESSAGES, str(input_msg))
+        else:
+            span.set_attribute(SC.GEN_AI_INPUT_MESSAGES, json.dumps(args) if args else str(kwargs))
     except:
         span.set_attribute(SC.GEN_AI_INPUT_MESSAGES, str(args))
         
     if result is not None:
         try:
-            span.set_attribute(SC.GEN_AI_OUTPUT_MESSAGES, json.dumps(result) if not isinstance(result, str) else result)
+            output_msg = None
+            if hasattr(result, "choices") and result.choices:
+                choice = result.choices[0]
+                if hasattr(choice, "message"):
+                    output_msg = getattr(choice.message, "content", str(choice.message))
+                elif hasattr(choice, "text"):
+                    output_msg = choice.text
+            
+            if not output_msg and hasattr(result, "content"):
+                output_msg = result.content
+            
+            if not output_msg and isinstance(result, dict):
+                output_msg = result.get("output") or result.get("response") or result.get("content")
+
+            if output_msg:
+                span.set_attribute(SC.GEN_AI_OUTPUT_MESSAGES, str(output_msg))
+            else:
+                res_str = str(result)
+                if "APIResponse" in res_str:
+                    span.set_attribute(SC.GEN_AI_OUTPUT_MESSAGES, "Raw API Response (Parsed internally)")
+                else:
+                    span.set_attribute(SC.GEN_AI_OUTPUT_MESSAGES, json.dumps(result) if not isinstance(result, str) else result)
         except:
             span.set_attribute(SC.GEN_AI_OUTPUT_MESSAGES, str(result))
 

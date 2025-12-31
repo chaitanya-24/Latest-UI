@@ -1,9 +1,12 @@
 import importlib.util
 import logging
+import time
+import inspect
 from opentelemetry.trace import SpanKind, Status, StatusCode
 from wrapt import wrap_function_wrapper
 from iagentops.otel import metrics, tracing
 from iagentops.semconv import SemanticConvention as SC
+from iagentops import helpers
 
 logger = logging.getLogger(__name__)
 
@@ -50,39 +53,63 @@ class AnthropicInstrumentor:
         def wrapper(wrapped, instance, args, kwargs):
             model = kwargs.get("model") or "unknown"
             span_name = f"anthropic.{operation} {model}"
+            
+            op_type = SC.GEN_AI_OPERATION_TYPE_CHAT
 
-            with self.tracer.start_as_current_span(span_name, kind=SpanKind.CLIENT) as span:
-                span.set_attribute("service.name", self.service_name)
-                span.set_attribute(SC.GEN_AI_SYSTEM, "anthropic")
-                span.set_attribute(SC.GEN_AI_OPERATION, SC.GEN_AI_OPERATION_TYPE_CHAT)
-                span.set_attribute(SC.GEN_AI_REQUEST_MODEL, model)
-                span.set_attribute(SC.GEN_AI_LLM_PROVIDER, "anthropic")
+            def _log_completion(span, result, duration):
+                helpers.emit_agent_telemetry(
+                    span=span,
+                    instance=instance,
+                    args=args,
+                    kwargs=kwargs,
+                    result=result,
+                    model=model,
+                    duration=duration,
+                    agent_id=self.agent_id,
+                    system="anthropic",
+                    operation=op_type
+                )
                 
-                if self.agent_id:
-                    span.set_attribute("agent.id", str(self.agent_id))
+                # Token usage for metrics
+                input_tokens = 0
+                output_tokens = 0
+                if hasattr(result, "usage") and result.usage:
+                    input_tokens = getattr(result.usage, "input_tokens", 0)
+                    output_tokens = getattr(result.usage, "output_tokens", 0)
+                
+                metrics.emit_metrics(duration * 1000, "anthropic", input_tokens, output_tokens, model)
+                span.set_status(Status(StatusCode.OK))
 
-                if "max_tokens" in kwargs:
-                    span.set_attribute(SC.GEN_AI_REQUEST_MAX_TOKENS, kwargs["max_tokens"])
-                    
+            def _log_error(span, e):
+                span.set_status(Status(StatusCode.ERROR, str(e)))
                 try:
-                    result = wrapped(*args, **kwargs)
-                    
-                    input_tokens = 0
-                    output_tokens = 0
-                    
-                    if hasattr(result, "usage"):
-                        input_tokens = getattr(result.usage, "input_tokens", 0)
-                        output_tokens = getattr(result.usage, "output_tokens", 0)
-                        span.set_attribute(SC.GEN_AI_USAGE_INPUT_TOKENS, input_tokens)
-                        span.set_attribute(SC.GEN_AI_USAGE_OUTPUT_TOKENS, output_tokens)
+                    span.set_attribute(SC.ERROR_TYPE, type(e).__name__)
+                except Exception:
+                    pass
+                span.record_exception(e)
 
-                    metrics.emit_metrics(0, "anthropic", input_tokens, output_tokens, model)
-
-                    span.set_status(Status(StatusCode.OK))
-                    return result
-                except Exception as e:
-                    span.set_status(Status(StatusCode.ERROR, str(e)))
-                    span.record_exception(e)
-                    raise
+            # Check if it's an async call
+            if inspect.iscoroutinefunction(wrapped):
+                async def async_wrapper():
+                    start_time = time.perf_counter()
+                    with self.tracer.start_as_current_span(span_name, kind=SpanKind.CLIENT) as span:
+                        try:
+                            result = await wrapped(*args, **kwargs)
+                            _log_completion(span, result, time.perf_counter() - start_time)
+                            return result
+                        except Exception as e:
+                            _log_error(span, e)
+                            raise
+                return async_wrapper()
+            else:
+                start_time = time.perf_counter()
+                with self.tracer.start_as_current_span(span_name, kind=SpanKind.CLIENT) as span:
+                    try:
+                        result = wrapped(*args, **kwargs)
+                        _log_completion(span, result, time.perf_counter() - start_time)
+                        return result
+                    except Exception as e:
+                        _log_error(span, e)
+                        raise
 
         return wrapper

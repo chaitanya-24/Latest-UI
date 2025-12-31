@@ -6,6 +6,7 @@ from opentelemetry.trace import SpanKind, Status, StatusCode
 from wrapt import wrap_function_wrapper
 from iagentops.otel import metrics, tracing
 from iagentops.semconv import SemanticConvention as SC
+from iagentops import helpers
 
 logger = logging.getLogger(__name__)
 
@@ -81,13 +82,35 @@ class MCPInstrumentor:
                 span.set_attribute("service.name", self.service_name)
                 span.set_attribute("deployment.environment", self.environment)
                 
-                # Set MCP-specific attributes
-                span.set_attribute(SC.GEN_AI_SYSTEM, "mcp")
+                # Context Propagation
+                # Inherit from active context (e.g. LangGraph)
+                ctx = helpers.get_active_context({})
+                framework = ctx.get("framework")
+                if framework:
+                    span.set_attribute(SC.AGENT_FRAMEWORK, framework)
+                    span.set_attribute(SC.GEN_AI_SYSTEM, "mcp") 
+                else:
+                    span.set_attribute(SC.GEN_AI_SYSTEM, "mcp")
+                
+                span.set_attribute(SC.GEN_AI_CONVERSATION_ID, ctx.get("conversation_id"))
+                span.set_attribute(SC.GEN_AI_DATA_SOURCE_ID, ctx.get("data_source_id"))
+                
+                # Standard Operation Name
+                if operation == "tool":
+                    span.set_attribute(SC.GEN_AI_OPERATION, "execute_tool")
+                else:
+                    span.set_attribute(SC.GEN_AI_OPERATION, operation)
+
                 if self.agent_id:
                     span.set_attribute(SC.AGENT_ID, str(self.agent_id))
 
                 if operation == "tool" and tool_name:
+                    # MCP specific
                     span.set_attribute(SC.GEN_AI_MCP_TOOL_NAME, tool_name)
+                    # Standard Tool Attributes
+                    span.set_attribute(SC.GEN_AI_TOOL_NAME, tool_name)
+                    span.set_attribute(SC.GEN_AI_TOOL_TYPE, "function") 
+                    
                     # arguments
                     arguments = None
                     if len(args) > 1:
@@ -109,10 +132,14 @@ class MCPInstrumentor:
                     # Capture outputs
                     if operation == "tool":
                         try:
+                            content = None
                             if hasattr(result, "content"):
-                                span.set_attribute(SC.GEN_AI_OUTPUT_MESSAGES, str(result.content))
+                                content = result.content
                             else:
-                                span.set_attribute(SC.GEN_AI_OUTPUT_MESSAGES, str(result))
+                                content = result
+                            
+                            span.set_attribute(SC.GEN_AI_OUTPUT_MESSAGES, str(content))
+                            
                         except Exception:
                             pass
                     

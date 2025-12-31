@@ -10,6 +10,7 @@ class SemanticConvention:
     SERVER_ADDRESS = "server.address"
     ERROR_TYPE = "error.type"
     GEN_AI_SERVER_REQUEST_DURATION = "gen_ai.server.request.duration"
+    GEN_AI_SERVER_TIME_PER_INPUT_TOKEN = "gen_ai.server.time_per_input_token"
     GEN_AI_SERVER_TIME_PER_OUTPUT_TOKEN = "gen_ai.server.time_per_output_token"
     GEN_AI_SERVER_TIME_TO_FIRST_TOKEN = "gen_ai.server.time_to_first_token"
     GEN_AI_CLIENT_INFERENCE_OPERATION_DETAILS = "gen_ai.client.inference.operation.details"

@@ -161,17 +161,24 @@ class IAgentOpsCallbackHandler(BaseCallbackHandler):
         if self.agent_id:
             span.set_attribute("agent.id", str(self.agent_id))
         
+        # Context Propagation - get context first to check for existing framework
+        if kwargs is None: kwargs = {}
+        
+        # Only add framework to kwargs if we have one (for get_active_context to consider)
         if self.system:
-            span.set_attribute(SC.GEN_AI_SYSTEM, self.system)
-            span.set_attribute(SC.AGENT_FRAMEWORK, self.system)
-            # Persist framework in context so it propagates to LLM spans
-            if kwargs is None: kwargs = {}
             kwargs["framework"] = self.system
         
-        # Context Propagation
-        ctx = helpers.get_active_context(kwargs or {})
+        ctx = helpers.get_active_context(kwargs)
+        
+        # Use the framework from context (may be different from self.system if parent set it)
+        framework = ctx.get("framework") or self.system
+        if framework:
+            span.set_attribute(SC.GEN_AI_SYSTEM, framework)
+            span.set_attribute(SC.AGENT_FRAMEWORK, framework)
+        
         span.set_attribute(SC.GEN_AI_CONVERSATION_ID, ctx.get("conversation_id"))
         span.set_attribute(SC.GEN_AI_DATA_SOURCE_ID, ctx.get("data_source_id"))
+
 
     def on_chain_start(
         self, serialized: Dict[str, Any], inputs: Dict[str, Any], *, run_id: UUID, parent_run_id: Optional[UUID] = None, **kwargs: Any
